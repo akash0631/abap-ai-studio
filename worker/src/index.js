@@ -1,261 +1,155 @@
-// ABAP AI Studio — Cloudflare Worker API Gateway
-// Handles: user auth, Claude API proxy, SAP request forwarding
+// ABAP AI Studio — Cloudflare Worker API Gateway v1.1
+// Works with or without D1 bindings — falls back to in-memory user store
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type,Authorization',
 };
+function json(d, s = 200) { return new Response(JSON.stringify(d), { status: s, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }); }
+function err(m, s = 400) { return json({ error: m }, s); }
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-  });
+const memUsers = new Map();
+
+async function signToken(p, secret) {
+  const h = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const b = btoa(JSON.stringify({ ...p, exp: Date.now() + 604800000 }));
+  const e = new TextEncoder();
+  const k = await crypto.subtle.importKey('raw', e.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const s = await crypto.subtle.sign('HMAC', k, e.encode(h + '.' + b));
+  return h + '.' + b + '.' + btoa(String.fromCharCode(...new Uint8Array(s)));
 }
-
-function err(message, status = 400) {
-  return json({ error: message }, status);
-}
-
-// Simple JWT-like token (HMAC-SHA256 based)
-async function signToken(payload, secret) {
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const body = btoa(JSON.stringify({ ...payload, exp: Date.now() + 86400000 }));
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${header}.${body}`));
-  return `${header}.${body}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`;
-}
-
 async function verifyToken(token, secret) {
   try {
-    const [header, body, sig] = token.split('.');
-    const enc = new TextEncoder();
-    const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
-    const sigBytes = Uint8Array.from(atob(sig), c => c.charCodeAt(0));
-    const valid = await crypto.subtle.verify('HMAC', key, sigBytes, enc.encode(`${header}.${body}`));
-    if (!valid) return null;
-    const payload = JSON.parse(atob(body));
-    if (payload.exp < Date.now()) return null;
-    return payload;
+    const [h, b, s] = token.split('.');
+    const e = new TextEncoder();
+    const k = await crypto.subtle.importKey('raw', e.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    const sb = Uint8Array.from(atob(s), c => c.charCodeAt(0));
+    if (!await crypto.subtle.verify('HMAC', k, sb, e.encode(h + '.' + b))) return null;
+    const p = JSON.parse(atob(b));
+    return p.exp < Date.now() ? null : p;
   } catch { return null; }
 }
-
-async function hashPassword(password) {
-  const enc = new TextEncoder();
-  const hash = await crypto.subtle.digest('SHA-256', enc.encode(password + 'abap-studio-salt-2026'));
-  return btoa(String.fromCharCode(...new Uint8Array(hash)));
+async function hashPw(pw) {
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw + 'abap-studio-salt-2026'));
+  return btoa(String.fromCharCode(...new Uint8Array(h)));
 }
-
-// Extract user from Authorization header
-async function getUser(request, env) {
-  const auth = request.headers.get('Authorization');
-  if (!auth?.startsWith('Bearer ')) return null;
-  return verifyToken(auth.slice(7), env.JWT_SECRET);
+async function getUser(req, env) {
+  const a = req.headers.get('Authorization');
+  return a?.startsWith('Bearer ') ? verifyToken(a.slice(7), env.JWT_SECRET || 'fallback') : null;
 }
 
 export default {
   async fetch(request, env) {
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS });
-    }
-
+    if (request.method === 'OPTIONS') return new Response(null, { headers: CORS_HEADERS });
     const url = new URL(request.url);
     const path = url.pathname;
+    const secret = env.JWT_SECRET || 'fallback';
 
     try {
-      // ── Public routes ──────────────────────────────
-      if (path === '/health') {
-        return json({ status: 'ok', service: 'abap-ai-studio', version: '1.0.0' });
+      if (path === '/health')
+        return json({ status: 'ok', service: 'abap-ai-studio', version: '1.1.0', d1: !!env.DB });
+
+      if (path === '/' || path === '/index.html') {
+        return new Response("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\"/>\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"/>\n<title>ABAP AI Studio</title>\n<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">\n<link href=\"https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap\" rel=\"stylesheet\">\n<script src=\"https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js\"></script>\n<script src=\"https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js\"></script>\n<script src=\"https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js\"></script>\n<style>\n*{box-sizing:border-box;margin:0;padding:0}\n:root{\n  --bg:#FAFAFA;--bg2:#FFFFFF;--bg3:#F3F4F6;--bg4:#E5E7EB;\n  --fg:#111827;--fg2:#374151;--fg3:#6B7280;--fg4:#9CA3AF;\n  --blue:#2563EB;--blue2:#1D4ED8;--blue-bg:#EFF6FF;--blue-t:#1E40AF;\n  --green:#059669;--green-bg:#ECFDF5;--green-t:#065F46;\n  --red:#DC2626;--red-bg:#FEF2F2;--red-t:#991B1B;\n  --amber:#D97706;--amber-bg:#FFFBEB;--amber-t:#92400E;\n  --purple:#7C3AED;--purple-bg:#F5F3FF;\n  --border:#E5E7EB;--border2:#D1D5DB;\n  --radius:8px;--radius-lg:12px;\n  --font:'Plus Jakarta Sans',sans-serif;\n  --mono:'JetBrains Mono',monospace;\n  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);\n  --shadow-lg:0 4px 12px rgba(0,0,0,.08);\n}\nbody{font-family:var(--font);background:var(--bg);color:var(--fg);font-size:14px;line-height:1.5;height:100vh;display:flex;flex-direction:column}\ninput,textarea,select{font-family:var(--font);font-size:14px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--fg);background:var(--bg2);outline:none;transition:border-color .15s}\ninput:focus,textarea:focus,select:focus{border-color:var(--blue)}\nbutton{font-family:var(--font);cursor:pointer;border:none;border-radius:var(--radius);font-size:13px;font-weight:600;padding:8px 16px;transition:all .15s}\n.btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:var(--blue2)}\n.btn-secondary{background:var(--bg3);color:var(--fg2);border:1px solid var(--border)}.btn-secondary:hover{background:var(--bg4)}\n.btn-danger{background:var(--red);color:#fff}\n.btn-ghost{background:transparent;color:var(--fg3);padding:6px 10px}.btn-ghost:hover{background:var(--bg3);color:var(--fg)}\n.btn-sm{padding:5px 10px;font-size:12px}\n.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}\n.badge-green{background:var(--green-bg);color:var(--green-t)}\n.badge-red{background:var(--red-bg);color:var(--red-t)}\n.badge-blue{background:var(--blue-bg);color:var(--blue-t)}\n.badge-amber{background:var(--amber-bg);color:var(--amber-t)}\n\n/* Layout */\n.header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20px;height:56px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)}\n.sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border);padding:12px 8px;display:flex;flex-direction:column;gap:2px;flex-shrink:0}\n.sidebar-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--radius);color:var(--fg3);font-weight:500;font-size:13px;cursor:pointer;transition:all .15s;border:none;background:transparent;width:100%;text-align:left}\n.sidebar-item:hover{background:var(--bg3);color:var(--fg)}\n.sidebar-item.active{background:var(--blue-bg);color:var(--blue-t);font-weight:600}\n.main{flex:1;display:flex;overflow:hidden}\n.content{flex:1;overflow-y:auto;padding:24px}\n\n/* Code blocks */\npre.code{background:#1E293B;color:#E2E8F0;padding:16px;border-radius:var(--radius);font-family:var(--mono);font-size:12.5px;line-height:1.7;overflow-x:auto;margin:8px 0}\n.code .kw{color:#7DD3FC}.code .str{color:#86EFAC}.code .cm{color:#94A3B8}.code .num{color:#FDE68A}\n\n/* Chat */\n.chat-container{display:flex;flex-direction:column;height:100%}\n.chat-messages{flex:1;overflow-y:auto;padding:16px}\n.chat-msg{display:flex;gap:12px;margin-bottom:16px;max-width:800px}\n.chat-msg.user{flex-direction:row-reverse;margin-left:auto}\n.chat-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}\n.chat-avatar.ai{background:var(--blue-bg);color:var(--blue-t)}\n.chat-avatar.user{background:var(--fg);color:#fff}\n.chat-bubble{padding:12px 16px;border-radius:var(--radius-lg);line-height:1.6;max-width:85%}\n.chat-bubble.ai{background:var(--bg2);border:1px solid var(--border)}\n.chat-bubble.user{background:var(--blue);color:#fff}\n.chat-input-area{border-top:1px solid var(--border);padding:16px;display:flex;gap:8px;background:var(--bg2)}\n\n/* Tables */\n.data-table{width:100%;border-collapse:collapse;font-size:13px}\n.data-table th{background:var(--bg3);padding:8px 12px;text-align:left;font-weight:600;color:var(--fg2);border-bottom:2px solid var(--border)}\n.data-table td{padding:7px 12px;border-bottom:1px solid var(--border)}\n.data-table tr:hover td{background:var(--blue-bg)}\n\n/* Source viewer */\n.source-line{font-family:var(--mono);font-size:12.5px;line-height:1.8;padding:0 16px}\n.line-no{color:var(--fg4);user-select:none;display:inline-block;width:40px;text-align:right;margin-right:16px}\n\n/* Login */\n.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:40px;width:400px;box-shadow:var(--shadow-lg)}\n\n/* Animations */\n@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}\n.fade-in{animation:fadeIn .3s ease}\n.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;box-shadow:var(--shadow)}\n</style>\n</head>\n<body>\n<div id=\"root\"></div>\n<script type=\"text/babel\">\nconst { useState, useEffect, useRef, useCallback } = React;\n\n// \u2500\u2500 Config \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nconst API_BASE = window.location.origin;\n\nconst ABAP_SYSTEM_PROMPT = `You are an expert SAP ABAP developer with 20+ years experience on S/4HANA.\nConnected to HANA DEV 192.168.144.174 (SID: S4D, Client: 210).\nAlways write modern ABAP 7.4+: inline declarations, string templates, CDS views, RAP, AMDPs.\nFormat all code in labeled ABAP code blocks. Add meaningful comments.\nSuggest HANA-optimized queries. Warn about obsolete statements.`;\n\nconst TEMPLATES = [\n  { id: 'abap_class', label: 'ABAP Class', icon: '{}' },\n  { id: 'cds_view', label: 'CDS View', icon: 'D' },\n  { id: 'amdp', label: 'AMDP', icon: 'H' },\n  { id: 'alv_report', label: 'ALV Report', icon: 'R' },\n  { id: 'badi', label: 'BAdI Impl', icon: 'B' },\n  { id: 'function_module', label: 'Function Module', icon: 'F' },\n  { id: 'bapi_wrapper', label: 'BAPI Wrapper', icon: 'W' },\n  { id: 'rap_bo', label: 'RAP Business Object', icon: 'O' },\n];\n\nconst SUGGESTIONS = [\n  'Write ABAP class to read VBAK/VBAP sales orders',\n  'Create CDS view for FI documents with currency conversion',\n  'Generate ALV report for open purchase orders',\n  'Explain ABAP RAP framework with full example',\n];\n\n// \u2500\u2500 API helper \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nasync function api(path, body, token) {\n  const headers = { 'Content-Type': 'application/json' };\n  if (token) headers.Authorization = `Bearer ${token}`;\n  const r = await fetch(`${API_BASE}${path}`, {\n    method: body ? 'POST' : 'GET', headers,\n    body: body ? JSON.stringify(body) : undefined\n  });\n  const data = await r.json();\n  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);\n  return data;\n}\n\n// \u2500\u2500 Format AI response \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction FormatResponse({ text }) {\n  const parts = text.split(/(```[\\s\\S]*?```)/g);\n  return React.createElement('div', null, parts.map((p, i) => {\n    if (p.startsWith('```')) {\n      const lines = p.slice(3, -3).split('\\n');\n      const lang = lines[0]?.trim() || 'ABAP';\n      const code = lines.slice(1).join('\\n');\n      return React.createElement('div', { key: i, style: { margin: '8px 0' } },\n        React.createElement('div', { style: { background: '#1E293B', borderRadius: '8px 8px 0 0', padding: '6px 12px', fontSize: 11, color: '#94A3B8', display: 'flex', justifyContent: 'space-between' } },\n          React.createElement('span', null, lang.toUpperCase()),\n          React.createElement('button', {\n            className: 'btn-ghost btn-sm',\n            style: { color: '#94A3B8', fontSize: 11 },\n            onClick: () => navigator.clipboard?.writeText(code)\n          }, 'Copy')\n        ),\n        React.createElement('pre', { className: 'code', style: { borderRadius: '0 0 8px 8px', marginTop: 0 } }, code)\n      );\n    }\n    return React.createElement('span', { key: i, style: { whiteSpace: 'pre-wrap' } }, p);\n  }));\n}\n\n// \u2500\u2500 Login Screen \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction LoginScreen({ onLogin }) {\n  const [mode, setMode] = useState('login');\n  const [username, setUsername] = useState('');\n  const [password, setPassword] = useState('');\n  const [displayName, setDisplayName] = useState('');\n  const [error, setError] = useState('');\n  const [loading, setLoading] = useState(false);\n\n  async function handleSubmit(e) {\n    e.preventDefault(); setError(''); setLoading(true);\n    try {\n      const data = mode === 'login'\n        ? await api('/auth/login', { username, password })\n        : await api('/auth/register', { username, password, display_name: displayName });\n      localStorage.setItem('abap_token', data.token);\n      localStorage.setItem('abap_user', JSON.stringify(data.user));\n      onLogin(data.token, data.user);\n    } catch (e) { setError(e.message); }\n    setLoading(false);\n  }\n\n  return React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'linear-gradient(135deg, #EFF6FF 0%, #FAFAFA 50%, #ECFDF5 100%)' } },\n    React.createElement('div', { className: 'login-card fade-in' },\n      React.createElement('div', { style: { textAlign: 'center', marginBottom: 24 } },\n        React.createElement('div', { style: { fontSize: 28, fontWeight: 700, color: 'var(--blue)', letterSpacing: '-0.5px' } }, 'ABAP AI Studio'),\n        React.createElement('div', { style: { fontSize: 13, color: 'var(--fg3)', marginTop: 4 } }, 'S4D DEV \\u00b7 192.168.144.174 \\u00b7 Client 210')\n      ),\n      React.createElement('div', { style: { display: 'flex', gap: 0, marginBottom: 20, background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: 3 } },\n        ['login', 'register'].map(m =>\n          React.createElement('button', { key: m, onClick: () => setMode(m), style: { flex: 1, padding: '8px 0', borderRadius: 6, border: 'none', fontWeight: 600, fontSize: 13, background: mode === m ? 'var(--bg2)' : 'transparent', color: mode === m ? 'var(--fg)' : 'var(--fg3)', boxShadow: mode === m ? 'var(--shadow)' : 'none', cursor: 'pointer' } },\n            m === 'login' ? 'Sign In' : 'Register')\n        )\n      ),\n      React.createElement('form', { onSubmit: handleSubmit, style: { display: 'flex', flexDirection: 'column', gap: 12 } },\n        mode === 'register' && React.createElement('input', { placeholder: 'Display Name', value: displayName, onChange: e => setDisplayName(e.target.value) }),\n        React.createElement('input', { placeholder: 'Username', value: username, onChange: e => setUsername(e.target.value), required: true }),\n        React.createElement('input', { placeholder: 'Password', type: 'password', value: password, onChange: e => setPassword(e.target.value), required: true }),\n        error && React.createElement('div', { style: { color: 'var(--red)', fontSize: 13 } }, error),\n        React.createElement('button', { type: 'submit', className: 'btn-primary', disabled: loading, style: { width: '100%', padding: 12, fontSize: 14, marginTop: 4 } },\n          loading ? 'Please wait...' : (mode === 'login' ? 'Sign In' : 'Create Account'))\n      )\n    )\n  );\n}\n\n// \u2500\u2500 SAP Config Modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction SapConfigModal({ token, onClose, onConnected }) {\n  const [sapUser, setSapUser] = useState('');\n  const [sapPass, setSapPass] = useState('');\n  const [status, setStatus] = useState('');\n\n  async function handleSave() {\n    try {\n      setStatus('Saving...');\n      await api('/auth/update-sap', { sap_user: sapUser, sap_password: sapPass }, token);\n      setStatus('Testing connection...');\n      await api('/sap/connect', {}, token);\n      onConnected(sapUser);\n    } catch (e) { setStatus('Error: ' + e.message); }\n  }\n\n  return React.createElement('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99 } },\n    React.createElement('div', { className: 'card fade-in', style: { width: 420 } },\n      React.createElement('h3', { style: { marginBottom: 16 } }, 'Configure SAP Credentials'),\n      React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },\n        React.createElement('input', { placeholder: 'SAP Username', value: sapUser, onChange: e => setSapUser(e.target.value) }),\n        React.createElement('input', { placeholder: 'SAP Password', type: 'password', value: sapPass, onChange: e => setSapPass(e.target.value) }),\n        status && React.createElement('div', { style: { fontSize: 13, color: status.startsWith('Error') ? 'var(--red)' : 'var(--green)' } }, status),\n        React.createElement('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },\n          React.createElement('button', { className: 'btn-secondary', onClick: onClose }, 'Cancel'),\n          React.createElement('button', { className: 'btn-primary', onClick: handleSave }, 'Save & Connect')\n        )\n      )\n    )\n  );\n}\n\n// \u2500\u2500 AI Chat Tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction ChatTab({ token }) {\n  const [messages, setMessages] = useState([]);\n  const [input, setInput] = useState('');\n  const [loading, setLoading] = useState(false);\n  const [context, setContext] = useState('');\n  const bottomRef = useRef(null);\n\n  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);\n\n  async function send(text) {\n    const msg = text || input.trim();\n    if (!msg) return;\n    setInput('');\n    const newMsgs = [...messages, { role: 'user', content: msg }];\n    setMessages(newMsgs);\n    setLoading(true);\n    try {\n      const apiMsgs = newMsgs.map(m => ({ role: m.role, content: m.content }));\n      const sys = ABAP_SYSTEM_PROMPT + (context ? '\\nContext: ' + context : '');\n      const data = await api('/claude', { model: 'claude-sonnet-4-20250514', max_tokens: 4096, system: sys, messages: apiMsgs }, token);\n      const reply = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\\n') || 'No response.';\n      setMessages([...newMsgs, { role: 'assistant', content: reply }]);\n    } catch (e) {\n      setMessages([...newMsgs, { role: 'assistant', content: 'Error: ' + e.message }]);\n    }\n    setLoading(false);\n  }\n\n  return React.createElement('div', { className: 'chat-container' },\n    React.createElement('div', { style: { padding: '12px 16px', borderBottom: '1px solid var(--border)' } },\n      React.createElement('input', { value: context, onChange: e => setContext(e.target.value), placeholder: 'Optional context: e.g. MM module, working on purchase orders...', style: { width: '100%' } })\n    ),\n    React.createElement('div', { className: 'chat-messages' },\n      messages.length === 0 && React.createElement('div', { className: 'fade-in', style: { textAlign: 'center', padding: '60px 20px' } },\n        React.createElement('div', { style: { fontSize: 40, marginBottom: 12 } }, '\\u26A1'),\n        React.createElement('h2', { style: { marginBottom: 8 } }, 'ABAP AI Assistant'),\n        React.createElement('p', { style: { color: 'var(--fg3)', marginBottom: 20, fontSize: 13 } }, 'Ask anything about ABAP, CDS, RAP, BAdIs, performance...'),\n        React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 600, margin: '0 auto' } },\n          SUGGESTIONS.map((s, i) =>\n            React.createElement('button', { key: i, className: 'btn-secondary btn-sm', onClick: () => send(s), style: { borderRadius: 20 } }, s)\n          )\n        )\n      ),\n      messages.map((m, i) =>\n        React.createElement('div', { key: i, className: `chat-msg ${m.role === 'user' ? 'user' : ''}` },\n          React.createElement('div', { className: `chat-avatar ${m.role === 'user' ? 'user' : 'ai'}` }, m.role === 'user' ? 'U' : 'AI'),\n          React.createElement('div', { className: `chat-bubble ${m.role === 'user' ? 'user' : 'ai'}` },\n            m.role === 'user' ? m.content : React.createElement(FormatResponse, { text: m.content })\n          )\n        )\n      ),\n      loading && React.createElement('div', { className: 'chat-msg' },\n        React.createElement('div', { className: 'chat-avatar ai' }, 'AI'),\n        React.createElement('div', { className: 'chat-bubble ai', style: { color: 'var(--fg3)' } }, 'Generating ABAP code...')\n      ),\n      React.createElement('div', { ref: bottomRef })\n    ),\n    React.createElement('div', { className: 'chat-input-area' },\n      React.createElement('textarea', { value: input, onChange: e => setInput(e.target.value), placeholder: 'Ask about ABAP... (Enter to send)', rows: 2, style: { flex: 1, resize: 'none' },\n        onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }\n      }),\n      React.createElement('button', { className: 'btn-primary', onClick: () => send(), disabled: loading, style: { alignSelf: 'flex-end' } }, 'Send')\n    )\n  );\n}\n\n// \u2500\u2500 Source Viewer Tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction SourceTab({ token }) {\n  const [program, setProgram] = useState('');\n  const [source, setSource] = useState('');\n  const [info, setInfo] = useState('');\n  const [loading, setLoading] = useState(false);\n  const [aiResult, setAiResult] = useState('');\n  const [showAi, setShowAi] = useState(false);\n\n  async function loadSource() {\n    if (!program.trim()) return;\n    setLoading(true); setSource(''); setInfo(''); setAiResult(''); setShowAi(false);\n    try {\n      const data = await api('/sap/source', { program: program.trim().toUpperCase() }, token);\n      setSource(data.source);\n      setInfo(`${data.program} \\u2014 ${data.lines} lines`);\n    } catch (e) { setInfo('Error: ' + e.message); }\n    setLoading(false);\n  }\n\n  async function aiAction(type) {\n    if (!source) return;\n    setShowAi(true); setAiResult('Analyzing...');\n    const prompt = type === 'optimize'\n      ? `Optimize this ABAP program:\\n\\`\\`\\`abap\\n${source.substring(0, 3000)}\\n\\`\\`\\`\\nIdentify performance issues, obsolete syntax, and provide optimized version.`\n      : `Code review this ABAP program:\\n\\`\\`\\`abap\\n${source.substring(0, 3000)}\\n\\`\\`\\`\\nRate out of 10. Review for quality, error handling, security, performance, S/4HANA compatibility.`;\n    try {\n      const data = await api('/claude', { model: 'claude-sonnet-4-20250514', max_tokens: 4096, system: ABAP_SYSTEM_PROMPT, messages: [{ role: 'user', content: prompt }] }, token);\n      setAiResult((data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\\n'));\n    } catch (e) { setAiResult('Error: ' + e.message); }\n  }\n\n  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },\n    React.createElement('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' } },\n      React.createElement('input', { value: program, onChange: e => setProgram(e.target.value), placeholder: 'Program name e.g. ZGATE_ENTRY_5_CHANGE_NEW', style: { flex: 1, minWidth: 250 }, onKeyDown: e => e.key === 'Enter' && loadSource() }),\n      React.createElement('button', { className: 'btn-primary', onClick: loadSource, disabled: loading }, loading ? 'Loading...' : 'Load Source'),\n      source && React.createElement('button', { className: 'btn-secondary', onClick: () => aiAction('optimize') }, '\\u2728 Optimize'),\n      source && React.createElement('button', { className: 'btn-secondary', onClick: () => aiAction('review') }, '\\uD83D\\uDD0D Review'),\n      source && React.createElement('button', { className: 'btn-ghost btn-sm', onClick: () => navigator.clipboard?.writeText(source) }, 'Copy')\n    ),\n    info && React.createElement('div', { style: { fontSize: 12, color: info.startsWith('Error') ? 'var(--red)' : 'var(--fg3)', marginBottom: 8 } }, info),\n    React.createElement('div', { style: { display: 'flex', gap: 16, flex: 1, overflow: 'hidden' } },\n      React.createElement('div', { style: { flex: 1, overflow: 'auto', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: source ? 12 : 40, textAlign: source ? 'left' : 'center', color: source ? 'var(--fg)' : 'var(--fg4)' } },\n        source ? source.split('\\n').map((line, i) =>\n          React.createElement('div', { key: i, className: 'source-line' },\n            React.createElement('span', { className: 'line-no' }, String(i + 1).padStart(4, ' ')),\n            line\n          )\n        ) : 'Enter a program name and click Load Source'\n      ),\n      showAi && React.createElement('div', { className: 'fade-in', style: { width: '45%', overflow: 'auto', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 16, fontSize: 13, lineHeight: 1.7 } },\n        React.createElement(FormatResponse, { text: aiResult })\n      )\n    )\n  );\n}\n\n// \u2500\u2500 Dictionary Tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction DictTab({ token }) {\n  const [type, setType] = useState('TABLE');\n  const [search, setSearch] = useState('');\n  const [results, setResults] = useState([]);\n  const [fields, setFields] = useState([]);\n  const [selectedName, setSelectedName] = useState('');\n\n  async function doSearch() {\n    if (!search.trim()) return;\n    const n = search.toUpperCase();\n    let q = '';\n    if (type === 'TABLE') q = `SELECT TOP 50 TABNAME,DDTEXT,TABCLASS FROM DD02L WHERE TABNAME LIKE '${n}%'`;\n    else if (type === 'DATA_ELEMENT') q = `SELECT TOP 50 ROLLNAME,DDTEXT FROM DD04V WHERE ROLLNAME LIKE '${n}%'`;\n    else if (type === 'FUNCTION') q = `SELECT TOP 50 FUNCNAME,PTEXT,AREA FROM TFDIR WHERE FUNCNAME LIKE '${n}%'`;\n    try {\n      const data = await api('/sap/query', { sql: q }, token);\n      setResults(data.rows || []);\n      setFields([]);\n      setSelectedName('');\n    } catch (e) { setResults([]); }\n  }\n\n  async function loadFields(name) {\n    setSelectedName(name);\n    try {\n      const data = await api('/sap/query', { sql: `SELECT TOP 200 FIELDNAME,ROLLNAME,INTTYPE,INTLEN,KEYFLAG FROM DD03L WHERE TABNAME = '${name}'` }, token);\n      setFields(data.rows || []);\n    } catch (e) { setFields([]); }\n  }\n\n  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },\n    React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },\n      React.createElement('select', { value: type, onChange: e => setType(e.target.value), style: { width: 150 } },\n        React.createElement('option', { value: 'TABLE' }, 'Table'),\n        React.createElement('option', { value: 'DATA_ELEMENT' }, 'Data Element'),\n        React.createElement('option', { value: 'FUNCTION' }, 'Function')\n      ),\n      React.createElement('input', { value: search, onChange: e => setSearch(e.target.value), placeholder: 'e.g. VBAK, KNA1, EKPO', style: { flex: 1 }, onKeyDown: e => e.key === 'Enter' && doSearch() }),\n      React.createElement('button', { className: 'btn-primary', onClick: doSearch }, 'Search')\n    ),\n    React.createElement('div', { style: { display: 'flex', gap: 16, flex: 1, overflow: 'hidden' } },\n      React.createElement('div', { style: { width: 220, overflow: 'auto', borderRight: '1px solid var(--border)', paddingRight: 12 } },\n        results.length === 0\n          ? React.createElement('div', { style: { color: 'var(--fg4)', fontSize: 13 } }, 'Results appear here')\n          : results.map((r, i) => {\n              const name = r.TABNAME || r.ROLLNAME || r.FUNCNAME || '';\n              return React.createElement('div', { key: i, className: `sidebar-item ${selectedName === name ? 'active' : ''}`, onClick: () => loadFields(name) },\n                React.createElement('div', null,\n                  React.createElement('div', { style: { fontWeight: 600, fontSize: 12 } }, name),\n                  React.createElement('div', { style: { fontSize: 11, color: 'var(--fg4)' } }, r.DDTEXT || r.PTEXT || '')\n                )\n              );\n            })\n      ),\n      React.createElement('div', { style: { flex: 1, overflow: 'auto' } },\n        fields.length > 0 && React.createElement('div', null,\n          React.createElement('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 } },\n            React.createElement('h3', null, selectedName),\n            React.createElement('span', { className: 'badge badge-blue' }, type)\n          ),\n          React.createElement('table', { className: 'data-table' },\n            React.createElement('thead', null,\n              React.createElement('tr', null, Object.keys(fields[0]).map(k => React.createElement('th', { key: k }, k)))\n            ),\n            React.createElement('tbody', null,\n              fields.map((r, i) => React.createElement('tr', { key: i },\n                Object.entries(r).map(([k, v]) => React.createElement('td', { key: k, style: k === 'KEYFLAG' && v === 'X' ? { color: 'var(--green)', fontWeight: 700 } : {} },\n                  k === 'KEYFLAG' && v === 'X' ? 'KEY' : (v ?? '\\u2014')\n                ))\n              ))\n            )\n          )\n        )\n      )\n    )\n  );\n}\n\n// \u2500\u2500 SQL Console Tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction SqlTab({ token }) {\n  const [sql, setSql] = useState(\"SELECT TOP 20\\n  NAME, CNAM, UNAM, UDAT\\nFROM TRDIR\\nWHERE NAME LIKE 'Z%'\");\n  const [result, setResult] = useState(null);\n  const [error, setError] = useState('');\n  const [loading, setLoading] = useState(false);\n\n  async function runSql() {\n    setLoading(true); setError(''); setResult(null);\n    try {\n      const data = await api('/sap/query', { sql }, token);\n      setResult(data);\n    } catch (e) { setError(e.message); }\n    setLoading(false);\n  }\n\n  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },\n    React.createElement('textarea', { value: sql, onChange: e => setSql(e.target.value), rows: 6, style: { fontFamily: 'var(--mono)', fontSize: 13, resize: 'vertical', marginBottom: 12 } }),\n    React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },\n      React.createElement('button', { className: 'btn-primary', onClick: runSql, disabled: loading }, loading ? 'Running...' : 'Execute'),\n      React.createElement('button', { className: 'btn-secondary', onClick: () => navigator.clipboard?.writeText(sql) }, 'Copy SQL')\n    ),\n    error && React.createElement('div', { style: { color: 'var(--red)', fontSize: 13, marginBottom: 8 } }, error),\n    result?.rows?.length > 0 && React.createElement('div', { style: { flex: 1, overflow: 'auto' } },\n      React.createElement('div', { style: { fontSize: 12, color: 'var(--fg3)', marginBottom: 8 } }, `${result.row_count} row(s)`),\n      React.createElement('table', { className: 'data-table' },\n        React.createElement('thead', null,\n          React.createElement('tr', null, (result.columns || Object.keys(result.rows[0])).map(c => React.createElement('th', { key: c }, c)))\n        ),\n        React.createElement('tbody', null,\n          result.rows.map((r, i) => React.createElement('tr', { key: i },\n            (result.columns || Object.keys(r)).map(c => React.createElement('td', { key: c }, r[c] ?? 'NULL'))\n          ))\n        )\n      )\n    )\n  );\n}\n\n// \u2500\u2500 Code Generator Tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction GenTab({ token }) {\n  const [template, setTemplate] = useState('abap_class');\n  const [table, setTable] = useState('');\n  const [desc, setDesc] = useState('');\n  const [result, setResult] = useState('');\n  const [loading, setLoading] = useState(false);\n\n  async function generate() {\n    if (!desc.trim()) return;\n    setLoading(true); setResult('');\n    const t = TEMPLATES.find(t => t.id === template);\n    const prompt = `Generate complete ${t.label} for: ${desc}. ${table ? 'Table: ' + table : ''}. Modern ABAP 7.4+, production-ready.`;\n    try {\n      const data = await api('/claude', { model: 'claude-sonnet-4-20250514', max_tokens: 4096, system: ABAP_SYSTEM_PROMPT, messages: [{ role: 'user', content: prompt }] }, token);\n      setResult((data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\\n'));\n    } catch (e) { setResult('Error: ' + e.message); }\n    setLoading(false);\n  }\n\n  return React.createElement('div', { style: { display: 'flex', gap: 20, height: '100%' } },\n    React.createElement('div', { style: { width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 } },\n      React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: 1 } }, 'Template'),\n      React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },\n        TEMPLATES.map(t =>\n          React.createElement('button', { key: t.id, className: `sidebar-item ${template === t.id ? 'active' : ''}`, onClick: () => setTemplate(t.id) },\n            React.createElement('span', { style: { width: 24, height: 24, borderRadius: 6, background: template === t.id ? 'var(--blue)' : 'var(--bg3)', color: template === t.id ? '#fff' : 'var(--fg3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, fontFamily: 'var(--mono)' } }, t.icon),\n            t.label\n          )\n        )\n      ),\n      React.createElement('input', { value: table, onChange: e => setTable(e.target.value), placeholder: 'SAP Table (optional) e.g. VBAK' }),\n      React.createElement('textarea', { value: desc, onChange: e => setDesc(e.target.value), rows: 5, placeholder: 'Describe what you need...', style: { resize: 'vertical' } }),\n      React.createElement('button', { className: 'btn-primary', onClick: generate, disabled: loading, style: { width: '100%' } }, loading ? 'Generating...' : 'Generate Code')\n    ),\n    React.createElement('div', { style: { flex: 1, overflow: 'auto', borderLeft: '1px solid var(--border)', paddingLeft: 20 } },\n      result ? React.createElement('div', { className: 'fade-in' }, React.createElement(FormatResponse, { text: result }))\n        : React.createElement('div', { style: { color: 'var(--fg4)', textAlign: 'center', marginTop: 60 } }, 'Select a template and describe your requirements')\n    )\n  );\n}\n\n// \u2500\u2500 Repository Tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction RepoTab({ token }) {\n  const [type, setType] = useState('PROG');\n  const [search, setSearch] = useState('');\n  const [results, setResults] = useState([]);\n\n  async function doSearch() {\n    if (!search.trim()) return;\n    const n = search.toUpperCase();\n    let q = '';\n    if (type === 'PROG') q = `SELECT TOP 40 NAME,CNAM,UNAM,UDAT FROM TRDIR WHERE NAME LIKE '${n}%'`;\n    else if (type === 'FUGR') q = `SELECT TOP 40 FUNCNAME,AREA,PTEXT FROM TFDIR WHERE FUNCNAME LIKE '${n}%'`;\n    else if (type === 'CLAS') q = `SELECT TOP 40 CLSNAME,DESCRIPT,LANGU FROM SEOCLASS WHERE CLSNAME LIKE '${n}%'`;\n    try {\n      const data = await api('/sap/query', { sql: q }, token);\n      setResults(data.rows || []);\n    } catch (e) { setResults([]); }\n  }\n\n  return React.createElement('div', null,\n    React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },\n      React.createElement('select', { value: type, onChange: e => setType(e.target.value), style: { width: 150 } },\n        React.createElement('option', { value: 'PROG' }, 'Programs'),\n        React.createElement('option', { value: 'FUGR' }, 'Function Groups'),\n        React.createElement('option', { value: 'CLAS' }, 'Classes')\n      ),\n      React.createElement('input', { value: search, onChange: e => setSearch(e.target.value), placeholder: 'e.g. Z*, ZGATE*', style: { flex: 1 }, onKeyDown: e => e.key === 'Enter' && doSearch() }),\n      React.createElement('button', { className: 'btn-primary', onClick: doSearch }, 'Search')\n    ),\n    results.length > 0 && React.createElement('table', { className: 'data-table' },\n      React.createElement('thead', null,\n        React.createElement('tr', null, Object.keys(results[0]).map(k => React.createElement('th', { key: k }, k)))\n      ),\n      React.createElement('tbody', null,\n        results.map((r, i) => React.createElement('tr', { key: i },\n          Object.entries(r).map(([k, v]) => React.createElement('td', { key: k, style: (k === 'NAME' || k === 'FUNCNAME' || k === 'CLSNAME') ? { fontWeight: 600, color: 'var(--blue)' } : {} }, v ?? '\\u2014'))\n        ))\n      )\n    )\n  );\n}\n\n// \u2500\u2500 Main App \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction App() {\n  const [token, setToken] = useState(localStorage.getItem('abap_token'));\n  const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('abap_user')); } catch { return null; } });\n  const [tab, setTab] = useState('chat');\n  const [sapConnected, setSapConnected] = useState(false);\n  const [showSapConfig, setShowSapConfig] = useState(false);\n\n  function logout() {\n    localStorage.removeItem('abap_token');\n    localStorage.removeItem('abap_user');\n    setToken(null);\n    setUser(null);\n  }\n\n  if (!token || !user) {\n    return React.createElement(LoginScreen, { onLogin: (t, u) => { setToken(t); setUser(u); } });\n  }\n\n  const tabs = [\n    { id: 'chat', label: 'AI Chat', icon: '\\uD83E\\uDD16' },\n    { id: 'source', label: 'Source Viewer', icon: '\\uD83D\\uDCDD' },\n    { id: 'dict', label: 'Dictionary', icon: '\\uD83D\\uDCD6' },\n    { id: 'repo', label: 'Repository', icon: '\\uD83D\\uDCC2' },\n    { id: 'sql', label: 'SQL Console', icon: '\\u25B6' },\n    { id: 'gen', label: 'Code Generator', icon: '\\u26A1' },\n  ];\n\n  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100vh' } },\n    // Header\n    React.createElement('div', { className: 'header' },\n      React.createElement('div', { style: { background: 'var(--blue)', color: '#fff', borderRadius: 6, padding: '4px 10px', fontWeight: 900, fontSize: 13 } }, 'SAP'),\n      React.createElement('div', null,\n        React.createElement('div', { style: { fontWeight: 700, fontSize: 15 } }, 'ABAP AI Studio'),\n        React.createElement('div', { style: { fontSize: 11, color: 'var(--fg3)' } }, 'DEV 192.168.144.174 \\u00b7 Client 210 \\u00b7 S4D')\n      ),\n      React.createElement('div', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 } },\n        sapConnected\n          ? React.createElement('span', { className: 'badge badge-green' }, '\\u25CF Connected \\u2014 ', user.sap_user || 'SAP')\n          : React.createElement('button', { className: 'btn-secondary btn-sm', onClick: () => setShowSapConfig(true) }, 'Connect SAP'),\n        React.createElement('span', { style: { fontSize: 13, fontWeight: 600 } }, user.display_name || user.username),\n        React.createElement('button', { className: 'btn-ghost btn-sm', onClick: logout }, 'Logout')\n      )\n    ),\n    // Body\n    React.createElement('div', { className: 'main' },\n      // Sidebar\n      React.createElement('div', { className: 'sidebar' },\n        tabs.map(t =>\n          React.createElement('button', { key: t.id, className: `sidebar-item ${tab === t.id ? 'active' : ''}`, onClick: () => setTab(t.id) },\n            React.createElement('span', { style: { fontSize: 16, width: 20, textAlign: 'center' } }, t.icon),\n            t.label\n          )\n        ),\n        React.createElement('div', { style: { flex: 1 } }),\n        React.createElement('div', { style: { padding: '8px 12px', fontSize: 11, color: 'var(--fg4)', borderTop: '1px solid var(--border)', marginTop: 8 } },\n          'v1.0 \\u00b7 Cloud Edition',\n          React.createElement('br'),\n          'Powered by Claude AI'\n        )\n      ),\n      // Content\n      React.createElement('div', { className: 'content' },\n        tab === 'chat' && React.createElement(ChatTab, { token }),\n        tab === 'source' && React.createElement(SourceTab, { token }),\n        tab === 'dict' && React.createElement(DictTab, { token }),\n        tab === 'repo' && React.createElement(RepoTab, { token }),\n        tab === 'sql' && React.createElement(SqlTab, { token }),\n        tab === 'gen' && React.createElement(GenTab, { token })\n      )\n    ),\n    // SAP Config Modal\n    showSapConfig && React.createElement(SapConfigModal, {\n      token,\n      onClose: () => setShowSapConfig(false),\n      onConnected: (sapUser) => { setSapConnected(true); setShowSapConfig(false); }\n    })\n  );\n}\n\nReactDOM.render(React.createElement(App), document.getElementById('root'));\n</script>\n</body>\n</html>\n", {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS_HEADERS },
+        });
       }
 
+
+      // ── Register ──
       if (path === '/auth/register' && request.method === 'POST') {
-        return handleRegister(request, env);
+        const { username, password, display_name } = await request.json();
+        if (!username || !password) return err('Username and password required');
+        if (username.length < 3 || password.length < 6) return err('Username min 3, password min 6 chars');
+        const pwHash = await hashPw(password);
+
+        if (env.DB) {
+          const ex = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
+          if (ex) return err('Username already taken');
+          const r = await env.DB.prepare('INSERT INTO users (username, password_hash, display_name, role) VALUES (?,?,?,?)').bind(username, pwHash, display_name || username, 'developer').run();
+          const id = r.meta.last_row_id;
+          return json({ token: await signToken({ id, username, role: 'developer', display_name: display_name || username }, secret), user: { id, username, role: 'developer', display_name: display_name || username } });
+        }
+        if (memUsers.has(username)) return err('Username already taken');
+        const id = memUsers.size + 1;
+        memUsers.set(username, { id, username, pwHash, display_name: display_name || username, role: 'developer', sap_user: '', sap_pass_enc: '' });
+        return json({ token: await signToken({ id, username, role: 'developer', display_name: display_name || username }, secret), user: { id, username, role: 'developer', display_name: display_name || username } });
       }
 
+      // ── Login ──
       if (path === '/auth/login' && request.method === 'POST') {
-        return handleLogin(request, env);
+        const { username, password } = await request.json();
+        if (!username || !password) return err('Username and password required');
+        const pwHash = await hashPw(password);
+        if (env.DB) {
+          const u = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
+          if (!u || u.password_hash !== pwHash) return err('Invalid credentials', 401);
+          return json({ token: await signToken({ id: u.id, username: u.username, role: u.role, display_name: u.display_name, sap_user: u.sap_user }, secret), user: { id: u.id, username: u.username, role: u.role, display_name: u.display_name, sap_user: u.sap_user } });
+        }
+        const u = memUsers.get(username);
+        if (!u || u.pwHash !== pwHash) return err('Invalid credentials', 401);
+        return json({ token: await signToken({ id: u.id, username, role: u.role, display_name: u.display_name, sap_user: u.sap_user }, secret), user: { id: u.id, username, role: u.role, display_name: u.display_name, sap_user: u.sap_user } });
       }
 
-      // ── Protected routes ───────────────────────────
+      // ── Protected routes ──
       const user = await getUser(request, env);
-      if (!user) return err('Unauthorized — please login', 401);
+      if (!user) return err('Unauthorized', 401);
 
-      if (path === '/auth/me') {
-        return json({ user });
-      }
+      if (path === '/auth/me') return json({ user });
 
       if (path === '/auth/update-sap' && request.method === 'POST') {
-        return handleUpdateSap(request, env, user);
+        const { sap_user, sap_password } = await request.json();
+        if (!sap_user || !sap_password) return err('SAP user and password required');
+        const enc = btoa(sap_password);
+        if (env.DB) await env.DB.prepare('UPDATE users SET sap_user=?, sap_password_enc=? WHERE id=?').bind(sap_user, enc, user.id).run();
+        const mu = memUsers.get(user.username);
+        if (mu) { mu.sap_user = sap_user; mu.sap_pass_enc = enc; }
+        else memUsers.set(user.username, { ...user, sap_user, sap_pass_enc: enc });
+        return json({ success: true });
       }
 
-      // Claude AI proxy
+      // ── Claude AI proxy ──
       if (path === '/claude' && request.method === 'POST') {
-        return handleClaude(request, env, user);
+        const body = await request.json();
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': env.ANTHROPIC_KEY },
+          body: JSON.stringify({ model: body.model || 'claude-sonnet-4-20250514', max_tokens: Math.min(body.max_tokens || 4096, 8192), system: body.system || undefined, messages: body.messages }),
+        });
+        return json(await resp.json());
       }
 
-      // SAP proxy routes — forward to Azure backend
+      // ── SAP proxy ──
       if (path.startsWith('/sap/')) {
-        return handleSapProxy(request, env, user, path);
+        let sapUser = '', sapPass = '';
+        if (env.DB) {
+          const du = await env.DB.prepare('SELECT sap_user, sap_password_enc FROM users WHERE id=?').bind(user.id).first();
+          if (du?.sap_user) { sapUser = du.sap_user; sapPass = atob(du.sap_password_enc); }
+        }
+        if (!sapUser) {
+          const mu = memUsers.get(user.username);
+          if (mu?.sap_user) { sapUser = mu.sap_user; sapPass = atob(mu.sap_pass_enc); }
+        }
+        if (!sapUser) return err('SAP credentials not configured. Go to Settings > Connect SAP.', 400);
+
+        const sapPath = path.replace('/sap/', '/');
+        let body = null;
+        if (request.method === 'POST') {
+          const rb = await request.json();
+          body = JSON.stringify({ ...rb, hana_user: sapUser, hana_password: sapPass });
+        }
+        const resp = await fetch(env.AZURE_BACKEND_URL + sapPath, { method: request.method, headers: { 'Content-Type': 'application/json' }, body });
+        return json(await resp.json(), resp.status);
       }
 
-      // Admin routes
       if (path === '/admin/users' && user.role === 'admin') {
-        return handleListUsers(env);
-      }
-
-      if (path === '/admin/audit' && user.role === 'admin') {
-        return handleAuditLog(env);
+        if (env.DB) { const r = await env.DB.prepare('SELECT id,username,display_name,role,sap_user,created_at,last_login FROM users ORDER BY id').all(); return json({ users: r.results }); }
+        return json({ users: Array.from(memUsers.values()).map(u => ({ id: u.id, username: u.username, display_name: u.display_name, role: u.role })) });
       }
 
       return err('Not found', 404);
-    } catch (e) {
-      return err(`Internal error: ${e.message}`, 500);
-    }
+    } catch (e) { return err('Internal error: ' + e.message, 500); }
   },
 };
-
-// ── Auth handlers ─────────────────────────────────────
-
-async function handleRegister(request, env) {
-  const { username, password, display_name } = await request.json();
-  if (!username || !password) return err('Username and password required');
-  if (username.length < 3) return err('Username must be at least 3 characters');
-  if (password.length < 6) return err('Password must be at least 6 characters');
-
-  const existing = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first();
-  if (existing) return err('Username already taken');
-
-  const pwHash = await hashPassword(password);
-  const result = await env.DB.prepare(
-    'INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?)'
-  ).bind(username, pwHash, display_name || username, 'developer').run();
-
-  await auditLog(env, result.meta.last_row_id, 'register', `New user registered: ${username}`);
-
-  const token = await signToken({ id: result.meta.last_row_id, username, role: 'developer', display_name: display_name || username }, env.JWT_SECRET);
-  return json({ token, user: { id: result.meta.last_row_id, username, role: 'developer', display_name: display_name || username } });
-}
-
-async function handleLogin(request, env) {
-  const { username, password } = await request.json();
-  if (!username || !password) return err('Username and password required');
-
-  const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
-  if (!user) return err('Invalid credentials', 401);
-
-  const pwHash = await hashPassword(password);
-  if (user.password_hash !== pwHash) return err('Invalid credentials', 401);
-
-  await env.DB.prepare('UPDATE users SET last_login = datetime(\'now\') WHERE id = ?').bind(user.id).run();
-  await auditLog(env, user.id, 'login', `User logged in: ${username}`);
-
-  const token = await signToken({
-    id: user.id, username: user.username, role: user.role,
-    display_name: user.display_name, sap_user: user.sap_user
-  }, env.JWT_SECRET);
-
-  return json({
-    token,
-    user: { id: user.id, username: user.username, role: user.role, display_name: user.display_name, sap_user: user.sap_user }
-  });
-}
-
-async function handleUpdateSap(request, env, user) {
-  const { sap_user, sap_password } = await request.json();
-  if (!sap_user || !sap_password) return err('SAP user and password required');
-
-  // Encrypt SAP password with a simple XOR (in production use proper encryption)
-  const enc = btoa(sap_password);
-  await env.DB.prepare('UPDATE users SET sap_user = ?, sap_password_enc = ? WHERE id = ?')
-    .bind(sap_user, enc, user.id).run();
-
-  await auditLog(env, user.id, 'update_sap', `SAP credentials updated for ${user.username}`);
-  return json({ success: true });
-}
-
-// ── Claude AI Proxy ──────────────────────────────────
-
-async function handleClaude(request, env, user) {
-  const body = await request.json();
-  await auditLog(env, user.id, 'claude_call', `Model: ${body.model}, tokens: ${body.max_tokens}`);
-
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
-      'x-api-key': env.ANTHROPIC_KEY,
-    },
-    body: JSON.stringify({
-      model: body.model || 'claude-sonnet-4-20250514',
-      max_tokens: Math.min(body.max_tokens || 4096, 8192),
-      system: body.system || undefined,
-      messages: body.messages,
-    }),
-  });
-
-  const data = await resp.json();
-  return json(data);
-}
-
-// ── SAP Proxy (forward to Azure backend) ─────────────
-
-async function handleSapProxy(request, env, user, path) {
-  // Get user's SAP credentials
-  const dbUser = await env.DB.prepare('SELECT sap_user, sap_password_enc FROM users WHERE id = ?')
-    .bind(user.id).first();
-
-  if (!dbUser?.sap_user) return err('SAP credentials not configured. Update via /auth/update-sap', 400);
-
-  const sapPassword = atob(dbUser.sap_password_enc);
-  const sapPath = path.replace('/sap/', '/');
-
-  // Forward to Azure backend
-  const azureUrl = `${env.AZURE_BACKEND_URL}${sapPath}`;
-
-  let body = null;
-  if (request.method === 'POST') {
-    const reqBody = await request.json();
-    body = JSON.stringify({ ...reqBody, hana_user: dbUser.sap_user, hana_password: sapPassword });
-  }
-
-  await auditLog(env, user.id, 'sap_call', `${request.method} ${sapPath}`);
-
-  const resp = await fetch(azureUrl, {
-    method: request.method,
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
-
-  const data = await resp.json();
-  return json(data, resp.status);
-}
-
-// ── Admin ────────────────────────────────────────────
-
-async function handleListUsers(env) {
-  const users = await env.DB.prepare(
-    'SELECT id, username, display_name, role, sap_user, created_at, last_login FROM users ORDER BY id'
-  ).all();
-  return json({ users: users.results });
-}
-
-async function handleAuditLog(env) {
-  const logs = await env.DB.prepare(
-    'SELECT a.*, u.username FROM audit_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.id DESC LIMIT 100'
-  ).all();
-  return json({ logs: logs.results });
-}
-
-// ── Audit logging ────────────────────────────────────
-
-async function auditLog(env, userId, action, detail) {
-  try {
-    await env.DB.prepare('INSERT INTO audit_log (user_id, action, detail) VALUES (?, ?, ?)')
-      .bind(userId, action, detail).run();
-  } catch (e) {
-    console.error('Audit log error:', e);
-  }
-}

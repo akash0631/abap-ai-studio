@@ -14,6 +14,7 @@ binding = "DB"
 database_name = "abap-studio-db"
 database_id = "ac942271-e64d-4981-a14f-3138651abee4"
 
-[[kv_namespaces]]
-binding = "SESSIONS"
-id = "d81f4ee343d94eadaba9095eee081a9a"
+# KV binding - add after first deploy if token has KV permissions
+# [[kv_namespaces]]
+# binding = "SESSIONS"
+# id = "d81f4ee343d94eadaba9095eee081a9a"
