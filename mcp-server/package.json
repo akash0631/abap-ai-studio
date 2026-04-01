@@ -1,0 +1,11 @@
+{
+  "name": "abap-ai-studio-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for ABAP AI Studio — SAP ABAP tools for Claude Code",
+  "type": "module",
+  "main": "index.mjs",
+  "bin": { "abap-ai-studio-mcp": "./index.mjs" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

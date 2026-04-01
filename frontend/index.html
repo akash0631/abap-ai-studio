@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ABAP AI Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#FAFAFA;--bg2:#FFFFFF;--bg3:#F3F4F6;--bg4:#E5E7EB;
+  --fg:#111827;--fg2:#374151;--fg3:#6B7280;--fg4:#9CA3AF;
+  --blue:#2563EB;--blue2:#1D4ED8;--blue-bg:#EFF6FF;--blue-t:#1E40AF;
+  --green:#059669;--green-bg:#ECFDF5;--green-t:#065F46;
+  --red:#DC2626;--red-bg:#FEF2F2;--red-t:#991B1B;
+  --amber:#D97706;--amber-bg:#FFFBEB;--amber-t:#92400E;
+  --purple:#7C3AED;--purple-bg:#F5F3FF;
+  --border:#E5E7EB;--border2:#D1D5DB;
+  --radius:8px;--radius-lg:12px;
+  --font:'Plus Jakarta Sans',sans-serif;
+  --mono:'JetBrains Mono',monospace;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg:0 4px 12px rgba(0,0,0,.08);
+}
+body{font-family:var(--font);background:var(--bg);color:var(--fg);font-size:14px;line-height:1.5;height:100vh;display:flex;flex-direction:column}
+input,textarea,select{font-family:var(--font);font-size:14px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--fg);background:var(--bg2);outline:none;transition:border-color .15s}
+input:focus,textarea:focus,select:focus{border-color:var(--blue)}
+button{font-family:var(--font);cursor:pointer;border:none;border-radius:var(--radius);font-size:13px;font-weight:600;padding:8px 16px;transition:all .15s}
+.btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:var(--blue2)}
+.btn-secondary{background:var(--bg3);color:var(--fg2);border:1px solid var(--border)}.btn-secondary:hover{background:var(--bg4)}
+.btn-danger{background:var(--red);color:#fff}
+.btn-ghost{background:transparent;color:var(--fg3);padding:6px 10px}.btn-ghost:hover{background:var(--bg3);color:var(--fg)}
+.btn-sm{padding:5px 10px;font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+.badge-green{background:var(--green-bg);color:var(--green-t)}
+.badge-red{background:var(--red-bg);color:var(--red-t)}
+.badge-blue{background:var(--blue-bg);color:var(--blue-t)}
+.badge-amber{background:var(--amber-bg);color:var(--amber-t)}
+
+/* Layout */
+.header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20px;height:56px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow)}
+.sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border);padding:12px 8px;display:flex;flex-direction:column;gap:2px;flex-shrink:0}
+.sidebar-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--radius);color:var(--fg3);font-weight:500;font-size:13px;cursor:pointer;transition:all .15s;border:none;background:transparent;width:100%;text-align:left}
+.sidebar-item:hover{background:var(--bg3);color:var(--fg)}
+.sidebar-item.active{background:var(--blue-bg);color:var(--blue-t);font-weight:600}
+.main{flex:1;display:flex;overflow:hidden}
+.content{flex:1;overflow-y:auto;padding:24px}
+
+/* Code blocks */
+pre.code{background:#1E293B;color:#E2E8F0;padding:16px;border-radius:var(--radius);font-family:var(--mono);font-size:12.5px;line-height:1.7;overflow-x:auto;margin:8px 0}
+.code .kw{color:#7DD3FC}.code .str{color:#86EFAC}.code .cm{color:#94A3B8}.code .num{color:#FDE68A}
+
+/* Chat */
+.chat-container{display:flex;flex-direction:column;height:100%}
+.chat-messages{flex:1;overflow-y:auto;padding:16px}
+.chat-msg{display:flex;gap:12px;margin-bottom:16px;max-width:800px}
+.chat-msg.user{flex-direction:row-reverse;margin-left:auto}
+.chat-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+.chat-avatar.ai{background:var(--blue-bg);color:var(--blue-t)}
+.chat-avatar.user{background:var(--fg);color:#fff}
+.chat-bubble{padding:12px 16px;border-radius:var(--radius-lg);line-height:1.6;max-width:85%}
+.chat-bubble.ai{background:var(--bg2);border:1px solid var(--border)}
+.chat-bubble.user{background:var(--blue);color:#fff}
+.chat-input-area{border-top:1px solid var(--border);padding:16px;display:flex;gap:8px;background:var(--bg2)}
+
+/* Tables */
+.data-table{width:100%;border-collapse:collapse;font-size:13px}
+.data-table th{background:var(--bg3);padding:8px 12px;text-align:left;font-weight:600;color:var(--fg2);border-bottom:2px solid var(--border)}
+.data-table td{padding:7px 12px;border-bottom:1px solid var(--border)}
+.data-table tr:hover td{background:var(--blue-bg)}
+
+/* Source viewer */
+.source-line{font-family:var(--mono);font-size:12.5px;line-height:1.8;padding:0 16px}
+.line-no{color:var(--fg4);user-select:none;display:inline-block;width:40px;text-align:right;margin-right:16px}
+
+/* Login */
+.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:40px;width:400px;box-shadow:var(--shadow-lg)}
+
+/* Animations */
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.fade-in{animation:fadeIn .3s ease}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;box-shadow:var(--shadow)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Config ────────────────────────────────────────────
+const API_BASE = window.location.hostname === 'localhost'
+  ? 'http://localhost:8787'
+  : 'https://abap-ai-studio.akash-bab.workers.dev';
+
+const ABAP_SYSTEM_PROMPT = `You are an expert SAP ABAP developer with 20+ years experience on S/4HANA.
+Connected to HANA DEV 192.168.144.174 (SID: S4D, Client: 210).
+Always write modern ABAP 7.4+: inline declarations, string templates, CDS views, RAP, AMDPs.
+Format all code in labeled ABAP code blocks. Add meaningful comments.
+Suggest HANA-optimized queries. Warn about obsolete statements.`;
+
+const TEMPLATES = [
+  { id: 'abap_class', label: 'ABAP Class', icon: '{}' },
+  { id: 'cds_view', label: 'CDS View', icon: 'D' },
+  { id: 'amdp', label: 'AMDP', icon: 'H' },
+  { id: 'alv_report', label: 'ALV Report', icon: 'R' },
+  { id: 'badi', label: 'BAdI Impl', icon: 'B' },
+  { id: 'function_module', label: 'Function Module', icon: 'F' },
+  { id: 'bapi_wrapper', label: 'BAPI Wrapper', icon: 'W' },
+  { id: 'rap_bo', label: 'RAP Business Object', icon: 'O' },
+];
+
+const SUGGESTIONS = [
+  'Write ABAP class to read VBAK/VBAP sales orders',
+  'Create CDS view for FI documents with currency conversion',
+  'Generate ALV report for open purchase orders',
+  'Explain ABAP RAP framework with full example',
+];
+
+// ── API helper ────────────────────────────────────────
+async function api(path, body, token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const r = await fetch(`${API_BASE}${path}`, {
+    method: body ? 'POST' : 'GET', headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+// ── Format AI response ────────────────────────────────
+function FormatResponse({ text }) {
+  const parts = text.split(/(```[\s\S]*?```)/g);
+  return React.createElement('div', null, parts.map((p, i) => {
+    if (p.startsWith('```')) {
+      const lines = p.slice(3, -3).split('\n');
+      const lang = lines[0]?.trim() || 'ABAP';
+      const code = lines.slice(1).join('\n');
+      return React.createElement('div', { key: i, style: { margin: '8px 0' } },
+        React.createElement('div', { style: { background: '#1E293B', borderRadius: '8px 8px 0 0', padding: '6px 12px', fontSize: 11, color: '#94A3B8', display: 'flex', justifyContent: 'space-between' } },
+          React.createElement('span', null, lang.toUpperCase()),
+          React.createElement('button', {
+            className: 'btn-ghost btn-sm',
+            style: { color: '#94A3B8', fontSize: 11 },
+            onClick: () => navigator.clipboard?.writeText(code)
+          }, 'Copy')
+        ),
+        React.createElement('pre', { className: 'code', style: { borderRadius: '0 0 8px 8px', marginTop: 0 } }, code)
+      );
+    }
+    return React.createElement('span', { key: i, style: { whiteSpace: 'pre-wrap' } }, p);
+  }));
+}
+
+// ── Login Screen ──────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [mode, setMode] = useState('login');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault(); setError(''); setLoading(true);
+    try {
+      const data = mode === 'login'
+        ? await api('/auth/login', { username, password })
+        : await api('/auth/register', { username, password, display_name: displayName });
+      localStorage.setItem('abap_token', data.token);
+      localStorage.setItem('abap_user', JSON.stringify(data.user));
+      onLogin(data.token, data.user);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  }
+
+  return React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'linear-gradient(135deg, #EFF6FF 0%, #FAFAFA 50%, #ECFDF5 100%)' } },
+    React.createElement('div', { className: 'login-card fade-in' },
+      React.createElement('div', { style: { textAlign: 'center', marginBottom: 24 } },
+        React.createElement('div', { style: { fontSize: 28, fontWeight: 700, color: 'var(--blue)', letterSpacing: '-0.5px' } }, 'ABAP AI Studio'),
+        React.createElement('div', { style: { fontSize: 13, color: 'var(--fg3)', marginTop: 4 } }, 'S4D DEV \u00b7 192.168.144.174 \u00b7 Client 210')
+      ),
+      React.createElement('div', { style: { display: 'flex', gap: 0, marginBottom: 20, background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: 3 } },
+        ['login', 'register'].map(m =>
+          React.createElement('button', { key: m, onClick: () => setMode(m), style: { flex: 1, padding: '8px 0', borderRadius: 6, border: 'none', fontWeight: 600, fontSize: 13, background: mode === m ? 'var(--bg2)' : 'transparent', color: mode === m ? 'var(--fg)' : 'var(--fg3)', boxShadow: mode === m ? 'var(--shadow)' : 'none', cursor: 'pointer' } },
+            m === 'login' ? 'Sign In' : 'Register')
+        )
+      ),
+      React.createElement('form', { onSubmit: handleSubmit, style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+        mode === 'register' && React.createElement('input', { placeholder: 'Display Name', value: displayName, onChange: e => setDisplayName(e.target.value) }),
+        React.createElement('input', { placeholder: 'Username', value: username, onChange: e => setUsername(e.target.value), required: true }),
+        React.createElement('input', { placeholder: 'Password', type: 'password', value: password, onChange: e => setPassword(e.target.value), required: true }),
+        error && React.createElement('div', { style: { color: 'var(--red)', fontSize: 13 } }, error),
+        React.createElement('button', { type: 'submit', className: 'btn-primary', disabled: loading, style: { width: '100%', padding: 12, fontSize: 14, marginTop: 4 } },
+          loading ? 'Please wait...' : (mode === 'login' ? 'Sign In' : 'Create Account'))
+      )
+    )
+  );
+}
+
+// ── SAP Config Modal ──────────────────────────────────
+function SapConfigModal({ token, onClose, onConnected }) {
+  const [sapUser, setSapUser] = useState('');
+  const [sapPass, setSapPass] = useState('');
+  const [status, setStatus] = useState('');
+
+  async function handleSave() {
+    try {
+      setStatus('Saving...');
+      await api('/auth/update-sap', { sap_user: sapUser, sap_password: sapPass }, token);
+      setStatus('Testing connection...');
+      await api('/sap/connect', {}, token);
+      onConnected(sapUser);
+    } catch (e) { setStatus('Error: ' + e.message); }
+  }
+
+  return React.createElement('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99 } },
+    React.createElement('div', { className: 'card fade-in', style: { width: 420 } },
+      React.createElement('h3', { style: { marginBottom: 16 } }, 'Configure SAP Credentials'),
+      React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+        React.createElement('input', { placeholder: 'SAP Username', value: sapUser, onChange: e => setSapUser(e.target.value) }),
+        React.createElement('input', { placeholder: 'SAP Password', type: 'password', value: sapPass, onChange: e => setSapPass(e.target.value) }),
+        status && React.createElement('div', { style: { fontSize: 13, color: status.startsWith('Error') ? 'var(--red)' : 'var(--green)' } }, status),
+        React.createElement('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          React.createElement('button', { className: 'btn-secondary', onClick: onClose }, 'Cancel'),
+          React.createElement('button', { className: 'btn-primary', onClick: handleSave }, 'Save & Connect')
+        )
+      )
+    )
+  );
+}
+
+// ── AI Chat Tab ───────────────────────────────────────
+function ChatTab({ token }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [context, setContext] = useState('');
+  const bottomRef = useRef(null);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  async function send(text) {
+    const msg = text || input.trim();
+    if (!msg) return;
+    setInput('');
+    const newMsgs = [...messages, { role: 'user', content: msg }];
+    setMessages(newMsgs);
+    setLoading(true);
+    try {
+      const apiMsgs = newMsgs.map(m => ({ role: m.role, content: m.content }));
+      const sys = ABAP_SYSTEM_PROMPT + (context ? '\nContext: ' + context : '');
+      const data = await api('/claude', { model: 'claude-sonnet-4-20250514', max_tokens: 4096, system: sys, messages: apiMsgs }, token);
+      const reply = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n') || 'No response.';
+      setMessages([...newMsgs, { role: 'assistant', content: reply }]);
+    } catch (e) {
+      setMessages([...newMsgs, { role: 'assistant', content: 'Error: ' + e.message }]);
+    }
+    setLoading(false);
+  }
+
+  return React.createElement('div', { className: 'chat-container' },
+    React.createElement('div', { style: { padding: '12px 16px', borderBottom: '1px solid var(--border)' } },
+      React.createElement('input', { value: context, onChange: e => setContext(e.target.value), placeholder: 'Optional context: e.g. MM module, working on purchase orders...', style: { width: '100%' } })
+    ),
+    React.createElement('div', { className: 'chat-messages' },
+      messages.length === 0 && React.createElement('div', { className: 'fade-in', style: { textAlign: 'center', padding: '60px 20px' } },
+        React.createElement('div', { style: { fontSize: 40, marginBottom: 12 } }, '\u26A1'),
+        React.createElement('h2', { style: { marginBottom: 8 } }, 'ABAP AI Assistant'),
+        React.createElement('p', { style: { color: 'var(--fg3)', marginBottom: 20, fontSize: 13 } }, 'Ask anything about ABAP, CDS, RAP, BAdIs, performance...'),
+        React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 600, margin: '0 auto' } },
+          SUGGESTIONS.map((s, i) =>
+            React.createElement('button', { key: i, className: 'btn-secondary btn-sm', onClick: () => send(s), style: { borderRadius: 20 } }, s)
+          )
+        )
+      ),
+      messages.map((m, i) =>
+        React.createElement('div', { key: i, className: `chat-msg ${m.role === 'user' ? 'user' : ''}` },
+          React.createElement('div', { className: `chat-avatar ${m.role === 'user' ? 'user' : 'ai'}` }, m.role === 'user' ? 'U' : 'AI'),
+          React.createElement('div', { className: `chat-bubble ${m.role === 'user' ? 'user' : 'ai'}` },
+            m.role === 'user' ? m.content : React.createElement(FormatResponse, { text: m.content })
+          )
+        )
+      ),
+      loading && React.createElement('div', { className: 'chat-msg' },
+        React.createElement('div', { className: 'chat-avatar ai' }, 'AI'),
+        React.createElement('div', { className: 'chat-bubble ai', style: { color: 'var(--fg3)' } }, 'Generating ABAP code...')
+      ),
+      React.createElement('div', { ref: bottomRef })
+    ),
+    React.createElement('div', { className: 'chat-input-area' },
+      React.createElement('textarea', { value: input, onChange: e => setInput(e.target.value), placeholder: 'Ask about ABAP... (Enter to send)', rows: 2, style: { flex: 1, resize: 'none' },
+        onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }
+      }),
+      React.createElement('button', { className: 'btn-primary', onClick: () => send(), disabled: loading, style: { alignSelf: 'flex-end' } }, 'Send')
+    )
+  );
+}
+
+// ── Source Viewer Tab ──────────────────────────────────
+function SourceTab({ token }) {
+  const [program, setProgram] = useState('');
+  const [source, setSource] = useState('');
+  const [info, setInfo] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [aiResult, setAiResult] = useState('');
+  const [showAi, setShowAi] = useState(false);
+
+  async function loadSource() {
+    if (!program.trim()) return;
+    setLoading(true); setSource(''); setInfo(''); setAiResult(''); setShowAi(false);
+    try {
+      const data = await api('/sap/source', { program: program.trim().toUpperCase() }, token);
+      setSource(data.source);
+      setInfo(`${data.program} \u2014 ${data.lines} lines`);
+    } catch (e) { setInfo('Error: ' + e.message); }
+    setLoading(false);
+  }
+
+  async function aiAction(type) {
+    if (!source) return;
+    setShowAi(true); setAiResult('Analyzing...');
+    const prompt = type === 'optimize'
+      ? `Optimize this ABAP program:\n\`\`\`abap\n${source.substring(0, 3000)}\n\`\`\`\nIdentify performance issues, obsolete syntax, and provide optimized version.`
+      : `Code review this ABAP program:\n\`\`\`abap\n${source.substring(0, 3000)}\n\`\`\`\nRate out of 10. Review for quality, error handling, security, performance, S/4HANA compatibility.`;
+    try {
+      const data = await api('/claude', { model: 'claude-sonnet-4-20250514', max_tokens: 4096, system: ABAP_SYSTEM_PROMPT, messages: [{ role: 'user', content: prompt }] }, token);
+      setAiResult((data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n'));
+    } catch (e) { setAiResult('Error: ' + e.message); }
+  }
+
+  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
+    React.createElement('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' } },
+      React.createElement('input', { value: program, onChange: e => setProgram(e.target.value), placeholder: 'Program name e.g. ZGATE_ENTRY_5_CHANGE_NEW', style: { flex: 1, minWidth: 250 }, onKeyDown: e => e.key === 'Enter' && loadSource() }),
+      React.createElement('button', { className: 'btn-primary', onClick: loadSource, disabled: loading }, loading ? 'Loading...' : 'Load Source'),
+      source && React.createElement('button', { className: 'btn-secondary', onClick: () => aiAction('optimize') }, '\u2728 Optimize'),
+      source && React.createElement('button', { className: 'btn-secondary', onClick: () => aiAction('review') }, '\uD83D\uDD0D Review'),
+      source && React.createElement('button', { className: 'btn-ghost btn-sm', onClick: () => navigator.clipboard?.writeText(source) }, 'Copy')
+    ),
+    info && React.createElement('div', { style: { fontSize: 12, color: info.startsWith('Error') ? 'var(--red)' : 'var(--fg3)', marginBottom: 8 } }, info),
+    React.createElement('div', { style: { display: 'flex', gap: 16, flex: 1, overflow: 'hidden' } },
+      React.createElement('div', { style: { flex: 1, overflow: 'auto', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: source ? 12 : 40, textAlign: source ? 'left' : 'center', color: source ? 'var(--fg)' : 'var(--fg4)' } },
+        source ? source.split('\n').map((line, i) =>
+          React.createElement('div', { key: i, className: 'source-line' },
+            React.createElement('span', { className: 'line-no' }, String(i + 1).padStart(4, ' ')),
+            line
+          )
+        ) : 'Enter a program name and click Load Source'
+      ),
+      showAi && React.createElement('div', { className: 'fade-in', style: { width: '45%', overflow: 'auto', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 16, fontSize: 13, lineHeight: 1.7 } },
+        React.createElement(FormatResponse, { text: aiResult })
+      )
+    )
+  );
+}
+
+// ── Dictionary Tab ────────────────────────────────────
+function DictTab({ token }) {
+  const [type, setType] = useState('TABLE');
+  const [search, setSearch] = useState('');
+  const [results, setResults] = useState([]);
+  const [fields, setFields] = useState([]);
+  const [selectedName, setSelectedName] = useState('');
+
+  async function doSearch() {
+    if (!search.trim()) return;
+    const n = search.toUpperCase();
+    let q = '';
+    if (type === 'TABLE') q = `SELECT TOP 50 TABNAME,DDTEXT,TABCLASS FROM DD02L WHERE TABNAME LIKE '${n}%'`;
+    else if (type === 'DATA_ELEMENT') q = `SELECT TOP 50 ROLLNAME,DDTEXT FROM DD04V WHERE ROLLNAME LIKE '${n}%'`;
+    else if (type === 'FUNCTION') q = `SELECT TOP 50 FUNCNAME,PTEXT,AREA FROM TFDIR WHERE FUNCNAME LIKE '${n}%'`;
+    try {
+      const data = await api('/sap/query', { sql: q }, token);
+      setResults(data.rows || []);
+      setFields([]);
+      setSelectedName('');
+    } catch (e) { setResults([]); }
+  }
+
+  async function loadFields(name) {
+    setSelectedName(name);
+    try {
+      const data = await api('/sap/query', { sql: `SELECT TOP 200 FIELDNAME,ROLLNAME,INTTYPE,INTLEN,KEYFLAG FROM DD03L WHERE TABNAME = '${name}'` }, token);
+      setFields(data.rows || []);
+    } catch (e) { setFields([]); }
+  }
+
+  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
+    React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
+      React.createElement('select', { value: type, onChange: e => setType(e.target.value), style: { width: 150 } },
+        React.createElement('option', { value: 'TABLE' }, 'Table'),
+        React.createElement('option', { value: 'DATA_ELEMENT' }, 'Data Element'),
+        React.createElement('option', { value: 'FUNCTION' }, 'Function')
+      ),
+      React.createElement('input', { value: search, onChange: e => setSearch(e.target.value), placeholder: 'e.g. VBAK, KNA1, EKPO', style: { flex: 1 }, onKeyDown: e => e.key === 'Enter' && doSearch() }),
+      React.createElement('button', { className: 'btn-primary', onClick: doSearch }, 'Search')
+    ),
+    React.createElement('div', { style: { display: 'flex', gap: 16, flex: 1, overflow: 'hidden' } },
+      React.createElement('div', { style: { width: 220, overflow: 'auto', borderRight: '1px solid var(--border)', paddingRight: 12 } },
+        results.length === 0
+          ? React.createElement('div', { style: { color: 'var(--fg4)', fontSize: 13 } }, 'Results appear here')
+          : results.map((r, i) => {
+              const name = r.TABNAME || r.ROLLNAME || r.FUNCNAME || '';
+              return React.createElement('div', { key: i, className: `sidebar-item ${selectedName === name ? 'active' : ''}`, onClick: () => loadFields(name) },
+                React.createElement('div', null,
+                  React.createElement('div', { style: { fontWeight: 600, fontSize: 12 } }, name),
+                  React.createElement('div', { style: { fontSize: 11, color: 'var(--fg4)' } }, r.DDTEXT || r.PTEXT || '')
+                )
+              );
+            })
+      ),
+      React.createElement('div', { style: { flex: 1, overflow: 'auto' } },
+        fields.length > 0 && React.createElement('div', null,
+          React.createElement('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 } },
+            React.createElement('h3', null, selectedName),
+            React.createElement('span', { className: 'badge badge-blue' }, type)
+          ),
+          React.createElement('table', { className: 'data-table' },
+            React.createElement('thead', null,
+              React.createElement('tr', null, Object.keys(fields[0]).map(k => React.createElement('th', { key: k }, k)))
+            ),
+            React.createElement('tbody', null,
+              fields.map((r, i) => React.createElement('tr', { key: i },
+                Object.entries(r).map(([k, v]) => React.createElement('td', { key: k, style: k === 'KEYFLAG' && v === 'X' ? { color: 'var(--green)', fontWeight: 700 } : {} },
+                  k === 'KEYFLAG' && v === 'X' ? 'KEY' : (v ?? '\u2014')
+                ))
+              ))
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+// ── SQL Console Tab ───────────────────────────────────
+function SqlTab({ token }) {
+  const [sql, setSql] = useState("SELECT TOP 20\n  NAME, CNAM, UNAM, UDAT\nFROM TRDIR\nWHERE NAME LIKE 'Z%'");
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function runSql() {
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const data = await api('/sap/query', { sql }, token);
+      setResult(data);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  }
+
+  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
+    React.createElement('textarea', { value: sql, onChange: e => setSql(e.target.value), rows: 6, style: { fontFamily: 'var(--mono)', fontSize: 13, resize: 'vertical', marginBottom: 12 } }),
+    React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
+      React.createElement('button', { className: 'btn-primary', onClick: runSql, disabled: loading }, loading ? 'Running...' : 'Execute'),
+      React.createElement('button', { className: 'btn-secondary', onClick: () => navigator.clipboard?.writeText(sql) }, 'Copy SQL')
+    ),
+    error && React.createElement('div', { style: { color: 'var(--red)', fontSize: 13, marginBottom: 8 } }, error),
+    result?.rows?.length > 0 && React.createElement('div', { style: { flex: 1, overflow: 'auto' } },
+      React.createElement('div', { style: { fontSize: 12, color: 'var(--fg3)', marginBottom: 8 } }, `${result.row_count} row(s)`),
+      React.createElement('table', { className: 'data-table' },
+        React.createElement('thead', null,
+          React.createElement('tr', null, (result.columns || Object.keys(result.rows[0])).map(c => React.createElement('th', { key: c }, c)))
+        ),
+        React.createElement('tbody', null,
+          result.rows.map((r, i) => React.createElement('tr', { key: i },
+            (result.columns || Object.keys(r)).map(c => React.createElement('td', { key: c }, r[c] ?? 'NULL'))
+          ))
+        )
+      )
+    )
+  );
+}
+
+// ── Code Generator Tab ────────────────────────────────
+function GenTab({ token }) {
+  const [template, setTemplate] = useState('abap_class');
+  const [table, setTable] = useState('');
+  const [desc, setDesc] = useState('');
+  const [result, setResult] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function generate() {
+    if (!desc.trim()) return;
+    setLoading(true); setResult('');
+    const t = TEMPLATES.find(t => t.id === template);
+    const prompt = `Generate complete ${t.label} for: ${desc}. ${table ? 'Table: ' + table : ''}. Modern ABAP 7.4+, production-ready.`;
+    try {
+      const data = await api('/claude', { model: 'claude-sonnet-4-20250514', max_tokens: 4096, system: ABAP_SYSTEM_PROMPT, messages: [{ role: 'user', content: prompt }] }, token);
+      setResult((data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n'));
+    } catch (e) { setResult('Error: ' + e.message); }
+    setLoading(false);
+  }
+
+  return React.createElement('div', { style: { display: 'flex', gap: 20, height: '100%' } },
+    React.createElement('div', { style: { width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 } },
+      React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: 'var(--fg3)', textTransform: 'uppercase', letterSpacing: 1 } }, 'Template'),
+      React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        TEMPLATES.map(t =>
+          React.createElement('button', { key: t.id, className: `sidebar-item ${template === t.id ? 'active' : ''}`, onClick: () => setTemplate(t.id) },
+            React.createElement('span', { style: { width: 24, height: 24, borderRadius: 6, background: template === t.id ? 'var(--blue)' : 'var(--bg3)', color: template === t.id ? '#fff' : 'var(--fg3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, fontFamily: 'var(--mono)' } }, t.icon),
+            t.label
+          )
+        )
+      ),
+      React.createElement('input', { value: table, onChange: e => setTable(e.target.value), placeholder: 'SAP Table (optional) e.g. VBAK' }),
+      React.createElement('textarea', { value: desc, onChange: e => setDesc(e.target.value), rows: 5, placeholder: 'Describe what you need...', style: { resize: 'vertical' } }),
+      React.createElement('button', { className: 'btn-primary', onClick: generate, disabled: loading, style: { width: '100%' } }, loading ? 'Generating...' : 'Generate Code')
+    ),
+    React.createElement('div', { style: { flex: 1, overflow: 'auto', borderLeft: '1px solid var(--border)', paddingLeft: 20 } },
+      result ? React.createElement('div', { className: 'fade-in' }, React.createElement(FormatResponse, { text: result }))
+        : React.createElement('div', { style: { color: 'var(--fg4)', textAlign: 'center', marginTop: 60 } }, 'Select a template and describe your requirements')
+    )
+  );
+}
+
+// ── Repository Tab ────────────────────────────────────
+function RepoTab({ token }) {
+  const [type, setType] = useState('PROG');
+  const [search, setSearch] = useState('');
+  const [results, setResults] = useState([]);
+
+  async function doSearch() {
+    if (!search.trim()) return;
+    const n = search.toUpperCase();
+    let q = '';
+    if (type === 'PROG') q = `SELECT TOP 40 NAME,CNAM,UNAM,UDAT FROM TRDIR WHERE NAME LIKE '${n}%'`;
+    else if (type === 'FUGR') q = `SELECT TOP 40 FUNCNAME,AREA,PTEXT FROM TFDIR WHERE FUNCNAME LIKE '${n}%'`;
+    else if (type === 'CLAS') q = `SELECT TOP 40 CLSNAME,DESCRIPT,LANGU FROM SEOCLASS WHERE CLSNAME LIKE '${n}%'`;
+    try {
+      const data = await api('/sap/query', { sql: q }, token);
+      setResults(data.rows || []);
+    } catch (e) { setResults([]); }
+  }
+
+  return React.createElement('div', null,
+    React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
+      React.createElement('select', { value: type, onChange: e => setType(e.target.value), style: { width: 150 } },
+        React.createElement('option', { value: 'PROG' }, 'Programs'),
+        React.createElement('option', { value: 'FUGR' }, 'Function Groups'),
+        React.createElement('option', { value: 'CLAS' }, 'Classes')
+      ),
+      React.createElement('input', { value: search, onChange: e => setSearch(e.target.value), placeholder: 'e.g. Z*, ZGATE*', style: { flex: 1 }, onKeyDown: e => e.key === 'Enter' && doSearch() }),
+      React.createElement('button', { className: 'btn-primary', onClick: doSearch }, 'Search')
+    ),
+    results.length > 0 && React.createElement('table', { className: 'data-table' },
+      React.createElement('thead', null,
+        React.createElement('tr', null, Object.keys(results[0]).map(k => React.createElement('th', { key: k }, k)))
+      ),
+      React.createElement('tbody', null,
+        results.map((r, i) => React.createElement('tr', { key: i },
+          Object.entries(r).map(([k, v]) => React.createElement('td', { key: k, style: (k === 'NAME' || k === 'FUNCNAME' || k === 'CLSNAME') ? { fontWeight: 600, color: 'var(--blue)' } : {} }, v ?? '\u2014'))
+        ))
+      )
+    )
+  );
+}
+
+// ── Main App ──────────────────────────────────────────
+function App() {
+  const [token, setToken] = useState(localStorage.getItem('abap_token'));
+  const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('abap_user')); } catch { return null; } });
+  const [tab, setTab] = useState('chat');
+  const [sapConnected, setSapConnected] = useState(false);
+  const [showSapConfig, setShowSapConfig] = useState(false);
+
+  function logout() {
+    localStorage.removeItem('abap_token');
+    localStorage.removeItem('abap_user');
+    setToken(null);
+    setUser(null);
+  }
+
+  if (!token || !user) {
+    return React.createElement(LoginScreen, { onLogin: (t, u) => { setToken(t); setUser(u); } });
+  }
+
+  const tabs = [
+    { id: 'chat', label: 'AI Chat', icon: '\uD83E\uDD16' },
+    { id: 'source', label: 'Source Viewer', icon: '\uD83D\uDCDD' },
+    { id: 'dict', label: 'Dictionary', icon: '\uD83D\uDCD6' },
+    { id: 'repo', label: 'Repository', icon: '\uD83D\uDCC2' },
+    { id: 'sql', label: 'SQL Console', icon: '\u25B6' },
+    { id: 'gen', label: 'Code Generator', icon: '\u26A1' },
+  ];
+
+  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100vh' } },
+    // Header
+    React.createElement('div', { className: 'header' },
+      React.createElement('div', { style: { background: 'var(--blue)', color: '#fff', borderRadius: 6, padding: '4px 10px', fontWeight: 900, fontSize: 13 } }, 'SAP'),
+      React.createElement('div', null,
+        React.createElement('div', { style: { fontWeight: 700, fontSize: 15 } }, 'ABAP AI Studio'),
+        React.createElement('div', { style: { fontSize: 11, color: 'var(--fg3)' } }, 'DEV 192.168.144.174 \u00b7 Client 210 \u00b7 S4D')
+      ),
+      React.createElement('div', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 } },
+        sapConnected
+          ? React.createElement('span', { className: 'badge badge-green' }, '\u25CF Connected \u2014 ', user.sap_user || 'SAP')
+          : React.createElement('button', { className: 'btn-secondary btn-sm', onClick: () => setShowSapConfig(true) }, 'Connect SAP'),
+        React.createElement('span', { style: { fontSize: 13, fontWeight: 600 } }, user.display_name || user.username),
+        React.createElement('button', { className: 'btn-ghost btn-sm', onClick: logout }, 'Logout')
+      )
+    ),
+    // Body
+    React.createElement('div', { className: 'main' },
+      // Sidebar
+      React.createElement('div', { className: 'sidebar' },
+        tabs.map(t =>
+          React.createElement('button', { key: t.id, className: `sidebar-item ${tab === t.id ? 'active' : ''}`, onClick: () => setTab(t.id) },
+            React.createElement('span', { style: { fontSize: 16, width: 20, textAlign: 'center' } }, t.icon),
+            t.label
+          )
+        ),
+        React.createElement('div', { style: { flex: 1 } }),
+        React.createElement('div', { style: { padding: '8px 12px', fontSize: 11, color: 'var(--fg4)', borderTop: '1px solid var(--border)', marginTop: 8 } },
+          'v1.0 \u00b7 Cloud Edition',
+          React.createElement('br'),
+          'Powered by Claude AI'
+        )
+      ),
+      // Content
+      React.createElement('div', { className: 'content' },
+        tab === 'chat' && React.createElement(ChatTab, { token }),
+        tab === 'source' && React.createElement(SourceTab, { token }),
+        tab === 'dict' && React.createElement(DictTab, { token }),
+        tab === 'repo' && React.createElement(RepoTab, { token }),
+        tab === 'sql' && React.createElement(SqlTab, { token }),
+        tab === 'gen' && React.createElement(GenTab, { token })
+      )
+    ),
+    // SAP Config Modal
+    showSapConfig && React.createElement(SapConfigModal, {
+      token,
+      onClose: () => setShowSapConfig(false),
+      onConnected: (sapUser) => { setSapConnected(true); setShowSapConfig(false); }
+    })
+  );
+}
+
+ReactDOM.render(React.createElement(App), document.getElementById('root'));
+</script>
+</body>
+</html>
