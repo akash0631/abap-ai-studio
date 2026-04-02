@@ -352,22 +352,22 @@ function AgentPipeline({token}){
         result.cross_rating?React.createElement('span',{className:'badge b-'+(result.cross_rating>=8?'green':'amber')},'Verify: '+result.cross_rating+'/10'):null,
         React.createElement('button',{className:'bs sm',onClick:function(){navigator.clipboard?.writeText(result.final_code||'')}},'Copy Final Code'),
         React.createElement('button',{className:'bg sm',style:{marginLeft:4},onClick:async function(){
-          var code=result.final_code||'';var m=code.match(/```abap\n([\s\S]*?)```/);if(m)code=m[1].trim();
-          var suggest='';
-          var fnMatch=code.match(/FUNCTION\s+(\w+)/i);
-          if(fnMatch){
-            try{var fm=await api('/repo/search',{term:fnMatch[1].toUpperCase()},token);
-              if(fm.type==='function_module'&&fm.include){suggest=fm.main_program.replace('SAPL','L')+'U'+String(fm.include).padStart(2,'0')}
-            }catch(e){}
-          }
-          if(!suggest){suggest=fnMatch?fnMatch[1]+'_REF':'ZPROGRAM_NAME'}
-          var progName=prompt('Deploy to SAP program/include:\n\n(Auto-detected: '+suggest+')',suggest);
-          if(!progName)return;
-          setRunning(true);setStageMsg('Deploying to SAP...');
-          try{var code=result.final_code||'';var m=code.match(/```abap\n([\s\S]*?)```/);if(m)code=m[1].trim();
-            var d=await api('/pipeline/deploy',{program:progName,source:code,title:'Pipeline: '+progName},token);
-            alert(d.status==='S'?'Deployed: '+d.message:'Error: '+(d.error||d.message));setStageMsg(d.status==='S'?'Deployed to '+progName:'Deploy failed')
-          }catch(x){alert('Failed: '+x.message)}setRunning(false)
+          setRunning(true);setStageMsg('Auto-detecting deploy target...');
+          try{
+            var code=result.final_code||'';var m=code.match(/```abap\n([\s\S]*?)```/);if(m)code=m[1].trim();
+            var d=await api('/pipeline/smart-deploy',{source:code},token);
+            if(d.needs_manual){
+              alert('FM '+d.function_module+' does not exist in SAP yet.\n\nPlease create manually:\n'+d.steps.join('\n'));
+              setStageMsg('Manual setup needed first');
+            }else if(d.status==='S'){
+              alert('Deployed to: '+d.deployed_to+'\nFM: '+d.function_module+'\nFG: '+d.function_group+'\n\nNext: '+d.next_step);
+              setStageMsg('Deployed to '+d.deployed_to+' — activate in SE37');
+            }else{
+              alert('Deploy error: '+(d.message||d.error));
+              setStageMsg('Deploy failed');
+            }
+          }catch(x){alert('Failed: '+x.message)}
+          setRunning(false);
         }},'Deploy to SAP')),
       React.createElement('div',{style:{fontWeight:600,marginBottom:6}},'Final Approved Code:'),
       React.createElement(Fmt,{text:result.final_code||''}),
