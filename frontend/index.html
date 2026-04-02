@@ -350,7 +350,16 @@ function AgentPipeline({token}){
         React.createElement('span',{className:'badge b-blue'},'Rating: '+(result.rating_initial||'?')+'/10'),
         React.createElement('span',{className:'badge b-blue'},result.iterations+' iteration(s)'),
         result.cross_rating?React.createElement('span',{className:'badge b-'+(result.cross_rating>=8?'green':'amber')},'Verify: '+result.cross_rating+'/10'):null,
-        React.createElement('button',{className:'bs sm',onClick:function(){navigator.clipboard?.writeText(result.final_code||'')}},'Copy Final Code')),
+        React.createElement('button',{className:'bs sm',onClick:function(){navigator.clipboard?.writeText(result.final_code||'')}},'Copy Final Code'),
+        React.createElement('button',{className:'bg sm',style:{marginLeft:4},onClick:async function(){
+          var progName=prompt('Enter SAP include name to deploy (e.g. LZSRM_VENDORU01):');
+          if(!progName)return;
+          setRunning(true);setStageMsg('Deploying to SAP...');
+          try{var code=result.final_code||'';var m=code.match(/```abap\n([\s\S]*?)```/);if(m)code=m[1].trim();
+            var d=await api('/pipeline/deploy',{program:progName,source:code,title:'Pipeline: '+progName},token);
+            alert(d.status==='S'?'Deployed: '+d.message:'Error: '+(d.error||d.message));setStageMsg(d.status==='S'?'Deployed to '+progName:'Deploy failed')
+          }catch(x){alert('Failed: '+x.message)}setRunning(false)
+        }},'Deploy to SAP')),
       React.createElement('div',{style:{fontWeight:600,marginBottom:6}},'Final Approved Code:'),
       React.createElement(Fmt,{text:result.final_code||''}),
       React.createElement('details',{style:{marginTop:14,border:'1px solid var(--border)',borderRadius:8,padding:12}},
