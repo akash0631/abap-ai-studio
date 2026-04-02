@@ -97,15 +97,13 @@ export default {
       }
 
       if(path.startsWith('/sap/')){
-        let su='',sp='';
-        if(env.DB){const du=await env.DB.prepare('SELECT sap_user,sap_password_enc FROM users WHERE id=?').bind(user.id).first();if(du?.sap_user){su=du.sap_user;sp=atob(du.sap_password_enc)}}
-        if(!su){const mu=MU.get(user.username)||ADMINS[user.username];if(mu?.sap_user){su=mu.sap_user;sp=atob(mu.sap_pass_enc)}}
-        if(!su)return err('SAP credentials not configured.',400);
-        const sp2=path.replace('/sap/','/');
+        const sapEndpoint=path.replace('/sap/','');
+        const sapUrl='https://sap-api.v2retail.net/api/abapstudio/'+sapEndpoint;
         let body=null;
-        if(request.method==='POST'){const rb=await request.json();body=JSON.stringify({...rb,hana_user:su,hana_password:sp})}
-        const resp=await fetch(env.AZURE_BACKEND_URL+sp2,{method:request.method,headers:{'Content-Type':'application/json'},body});
-        return json(await resp.json(),resp.status);
+        if(request.method==='POST'){body=await request.text()}
+        const resp=await fetch(sapUrl,{method:request.method,headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},body});
+        const data=await resp.json();
+        return json(data,resp.status);
       }
 
       return err('Not found',404);
