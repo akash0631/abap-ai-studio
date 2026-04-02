@@ -401,7 +401,7 @@ export default {
         const crossResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-            system:'You are an INDEPENDENT cross-reviewer checking for over-engineering and spec violations. Check for: 1) Functional correctness 2) Changed JOIN conditions that alter results 3) Removed business logic 4) Changed WHERE conditions 5) Interface changes 6) ALPHA vs UPPER CASE misuse 7) Missing RETURN statements. Rate correctness /10. List ANY functional issues found. Be brief and precise.',
+            system:'You are an INDEPENDENT cross-reviewer checking for over-engineering, spec violations, and phantom dependencies (non-existent FM calls). Check for: 1) Interface violations (extra params/exceptions not in spec) 2) Over-engineering (hash/crypto when spec says plain text) 3) Phantom FMs (calls to non-existent functions) 4) ALPHA vs UPPER CASE misuse 5) Changed JOIN/WHERE conditions 6) Removed business logic 7) Missing RETURN 8) LFA1-LOEVM compare with X not abap_true. Rate correctness /10. List ANY functional issues found. Be brief and precise.',
             messages:[{role:'user',content:'Requirement: '+requirement+'\n\nFinal code to verify:\n'+finalCode.substring(0,6000)}]})});
         const crossData=await crossResp.json();
         const crossReview=(crossData.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n');
