@@ -142,13 +142,13 @@ function Source({token}){
 
 // ── Repository with action buttons ──
 function Repo({token}){
-  const[type,setType]=useState('PROG');const[search,setSearch]=useState('');const[results,setResults]=useState([]);const[loading,setLoading]=useState(false);const[aiResult,setAiResult]=useState('');const[showAi,setShowAi]=useState(false);
-  async function go(){if(!search.trim())return;setLoading(true);const n=search.toUpperCase();let q='';
-    if(type==='PROG')q="SELECT TOP 50 NAME,CNAM,UDAT FROM TRDIR WHERE NAME LIKE '"+n+"%'";
-    else if(type==='FUGR')q="SELECT TOP 50 FUNCNAME,AREA,PTEXT FROM TFDIR WHERE FUNCNAME LIKE '"+n+"%'";
-    else if(type==='CLAS')q="SELECT TOP 50 CLSNAME,DESCRIPT FROM SEOCLASS WHERE CLSNAME LIKE '"+n+"%'";
-    else q="SELECT TOP 50 OBJ_NAME,OBJECT,DEVCLASS FROM TADIR WHERE OBJ_NAME LIKE '"+n+"%'";
-    try{const d=await api('/sap/query',{sql:q},token);setResults(d.rows||[])}catch(x){setResults([])}setLoading(false)}
+  const[type,setType]=useState('PROG');const[search,setSearch]=useState('');const[results,setResults]=useState([]);const[loading,setLoading]=useState(false);const[smartResult,setSmartResult]=useState(null);const[aiResult,setAiResult]=useState('');const[showAi,setShowAi]=useState(false);
+async function go(){if(!search.trim())return;setLoading(true);setSmartResult(null);
+    try{var d=await api('/sap/smart-search',{term:search},token);setSmartResult(d);
+      if(d.type==='program')setResults(d.results||[]);
+      else if(d.type==='function_modules_list')setResults((d.results||[]).map(function(r){return{NAME:r.name,CNAM:r.program}}));
+      else setResults([]);
+    }catch(x){setResults([])}setLoading(false)}
   async function aiAction(name,act){setShowAi(true);setAiResult('Loading source...');try{
     const src=await api('/sap/source',{program:name},token);if(src.error){setAiResult('Error: '+src.error);return}
     var prompt=act==='review'?'Code review '+name+'. Rate /10. Check quality, errors, security, performance, S4HANA compat.':'Optimize '+name+'. Show every improvement with modern ABAP 7.4+.';
@@ -163,7 +163,27 @@ function Repo({token}){
       React.createElement('button',{className:'bp',onClick:go,disabled:loading},loading?'Searching...':'Search')),
     React.createElement('div',{style:{display:'flex',gap:12,flex:1,overflow:'hidden'}},
       React.createElement('div',{style:{flex:showAi?1:undefined,width:showAi?undefined:'100%',overflow:'auto'}},
-        data.length>0?React.createElement('div',null,
+        smartResult&&(smartResult.type==='function_module'||smartResult.type==='function_group')?React.createElement('div',{className:'card',style:{marginBottom:12}},
+        React.createElement('div',{style:{display:'flex',gap:8,alignItems:'center',marginBottom:8}},
+          React.createElement('span',{className:'badge b-blue'},smartResult.type==='function_module'?'Function Module':'Function Group'),
+          React.createElement('span',{style:{fontWeight:700,fontSize:15}},smartResult.function_module||smartResult.function_group),
+          smartResult.function_group?React.createElement('span',{style:{color:'var(--fg3)',fontSize:13}},'Function Group: '+smartResult.function_group):null,
+          smartResult.main_program?React.createElement('span',{style:{color:'var(--fg4)',fontSize:12}},'Main: '+smartResult.main_program):null),
+        React.createElement('div',{style:{display:'flex',gap:20}},
+          React.createElement('div',{style:{flex:1}},
+            React.createElement('div',{style:{fontWeight:600,fontSize:13,marginBottom:6,color:'var(--blue)'}},'Function Modules ('+(smartResult.all_function_modules||[]).length+')'),
+            (smartResult.all_function_modules||[]).map(function(fm,i){return React.createElement('div',{key:i,style:{display:'flex',gap:8,padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:12}},
+              React.createElement('div',{style:{fontWeight:600,color:'var(--blue)',cursor:'pointer',flex:1},onClick:function(){aiAction(fm.include||fm.name,'review');}},fm.name),
+              React.createElement('button',{className:'bp sm',onClick:function(){aiAction(fm.include||fm.name,'view')}},'View'),
+              React.createElement('button',{className:'bs sm',onClick:function(){aiAction(fm.include||fm.name,'review')}},'Review'),
+              React.createElement('button',{className:'bs sm',onClick:function(){aiAction(fm.include||fm.name,'optimize')}},'Optimize'))})),
+          React.createElement('div',{style:{flex:1}},
+            React.createElement('div',{style:{fontWeight:600,fontSize:13,marginBottom:6,color:'var(--green)'}},'Includes ('+(smartResult.all_includes||[]).length+')'),
+            (smartResult.all_includes||[]).map(function(inc,i){return React.createElement('div',{key:i,style:{display:'flex',gap:8,padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:12}},
+              React.createElement('div',{style:{fontWeight:600,flex:1}},inc.name),
+              React.createElement('div',{style:{color:'var(--fg4)',width:80}},inc.changed||''),
+              React.createElement('button',{className:'bg sm',onClick:function(){aiAction(inc.name,'view')}},'View'))}))))):null,
+      data.length>0?React.createElement('div',null,
           React.createElement('div',{style:{fontSize:12,color:'var(--fg3)',marginBottom:6}},data.length+' result(s)'),
           React.createElement('table',{className:'dt'},
             React.createElement('thead',null,React.createElement('tr',null,cols.map(function(c){return React.createElement('th',{key:c},c)}),React.createElement('th',null,'Actions'))),
