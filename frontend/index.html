@@ -144,7 +144,7 @@ function Source({token}){
 function Repo({token}){
   const[type,setType]=useState('PROG');const[search,setSearch]=useState('');const[results,setResults]=useState([]);const[loading,setLoading]=useState(false);const[smartResult,setSmartResult]=useState(null);const[aiResult,setAiResult]=useState('');const[showAi,setShowAi]=useState(false);
 async function go(){if(!search.trim())return;setLoading(true);setSmartResult(null);
-    try{var d=await api('/sap/smart-search',{term:search},token);setSmartResult(d);
+    try{var d=await api('/repo/search',{term:search},token);setSmartResult(d);
       if(d.type==='program')setResults(d.results||[]);
       else if(d.type==='function_modules_list')setResults((d.results||[]).map(function(r){return{NAME:r.name,CNAM:r.program}}));
       else setResults([]);
