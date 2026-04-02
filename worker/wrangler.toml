@@ -5,16 +5,7 @@ compatibility_date = "2024-12-01"
 [vars]
 AZURE_BACKEND_URL = "https://abap-sap-proxy.happyocean-047968bd.centralindia.azurecontainerapps.io"
 
-# Secrets (set via `wrangler secret put`):
-# JWT_SECRET
-# ANTHROPIC_KEY
-
 [[d1_databases]]
 binding = "DB"
 database_name = "abap-studio-db"
 database_id = "ac942271-e64d-4981-a14f-3138651abee4"
-
-# KV binding - add after first deploy if token has KV permissions
-# [[kv_namespaces]]
-# binding = "SESSIONS"
-# id = "d81f4ee343d94eadaba9095eee081a9a"

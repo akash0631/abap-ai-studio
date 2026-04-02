@@ -239,23 +239,83 @@ function Pipeline({token}){
 }
 
 // ── Main App ──
+// Admin Console
+function Admin({token}){
+  const[data,setData]=useState(null);const[atab,setAtab]=useState('feed');const[loading,setLoading]=useState(true);
+  useEffect(function(){api('/admin/dashboard',null,token).then(function(d){setData(d);setLoading(false)}).catch(function(){setLoading(false)})},[]);
+  if(loading)return React.createElement('div',{style:{padding:40,textAlign:'center',color:'var(--fg3)'}},'Loading...');
+  if(!data)return React.createElement('div',{style:{padding:40,color:'var(--red)'}},'Admin access required');
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{style:{display:'flex',gap:16,marginBottom:16}},
+      React.createElement('div',{className:'card',style:{flex:1,textAlign:'center'}},React.createElement('div',{style:{fontSize:28,fontWeight:700,color:'var(--blue)'}},data.users),React.createElement('div',{style:{fontSize:12,color:'var(--fg3)'}},'Users')),
+      React.createElement('div',{className:'card',style:{flex:1,textAlign:'center'}},React.createElement('div',{style:{fontSize:28,fontWeight:700,color:'var(--green)'}},data.calls_today),React.createElement('div',{style:{fontSize:12,color:'var(--fg3)'}},'Actions Today')),
+      React.createElement('div',{className:'card',style:{flex:1,textAlign:'center'}},React.createElement('div',{style:{fontSize:28,fontWeight:700,color:'var(--purple)'}},data.by_user?.length||0),React.createElement('div',{style:{fontSize:12,color:'var(--fg3)'}},'Active Devs'))),
+    React.createElement('div',{className:'tabs-row'},
+      ['feed','users','usage'].map(function(t){return React.createElement('button',{key:t,className:'tab-btn '+(atab===t?'a':''),onClick:function(){setAtab(t)}},{feed:'Activity Feed',users:'Users',usage:'Usage'}[t])})),
+    React.createElement('div',{style:{flex:1,overflow:'auto'}},
+      atab==='feed'?(data.recent||[]).map(function(r,i){return React.createElement('div',{key:i,style:{display:'flex',gap:10,padding:'8px 0',borderBottom:'1px solid var(--border)',fontSize:13}},
+        React.createElement('div',{style:{width:80,fontWeight:600,color:'var(--blue)'}},r.username||'?'),
+        React.createElement('span',{className:'badge b-blue',style:{width:90}},r.action),
+        React.createElement('div',{style:{flex:1,color:'var(--fg3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},r.detail||''),
+        React.createElement('div',{style:{width:130,color:'var(--fg4)',fontSize:11}},r.created_at||''))}):null,
+      atab==='users'?React.createElement(DataTable,{rows:data.by_user||[]}):null,
+      atab==='usage'?(data.by_user||[]).map(function(u,i){return React.createElement('div',{key:i,style:{display:'flex',alignItems:'center',gap:12,padding:'8px 0',borderBottom:'1px solid var(--border)'}},
+        React.createElement('div',{style:{width:120,fontWeight:600}},u.display_name||u.username),
+        React.createElement('div',{style:{flex:1,height:24,background:'var(--bg3)',borderRadius:12,overflow:'hidden'}},React.createElement('div',{style:{height:'100%',width:Math.min(100,Math.max(5,(u.calls||0)*3))+'%',background:'var(--blue)',borderRadius:12}})),
+        React.createElement('div',{style:{width:60,textAlign:'right',fontWeight:600}},u.calls||0))}):null));
+}
+
+// Agent Pipeline
+function AgentPipeline({token}){
+  const[req,setReq]=useState('');const[tpl,setTpl]=useState('abap_class');const[running,setRunning]=useState(false);const[result,setResult]=useState(null);
+  async function runPipeline(){if(!req.trim())return;setRunning(true);setResult(null);try{var d=await api('/pipeline',{requirement:req,template:tpl},token);setResult(d)}catch(x){setResult({error:x.message})}setRunning(false)}
+  var tpls=['abap_class','cds_view','amdp','alv_report','badi','function_module','rap_bo'];
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{className:'card',style:{marginBottom:14}},
+      React.createElement('div',{style:{fontWeight:700,fontSize:15,marginBottom:10}},'Autonomous Agent Pipeline (Coder > Reviewer > Fixer)'),
+      React.createElement('div',{style:{display:'flex',gap:8}},
+        React.createElement('select',{value:tpl,onChange:function(e){setTpl(e.target.value)},style:{width:150}},tpls.map(function(t){return React.createElement('option',{key:t,value:t},t.replace(/_/g,' '))})),
+        React.createElement('input',{value:req,onChange:function(e){setReq(e.target.value)},placeholder:'Describe what you need...',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')runPipeline()}}),
+        React.createElement('button',{className:'bp',onClick:runPipeline,disabled:running},running?'Agents Working (~30s)...':'Run Pipeline'))),
+    running?React.createElement('div',{className:'card',style:{textAlign:'center',padding:30}},
+      React.createElement('div',{style:{display:'flex',justifyContent:'center',gap:30,marginBottom:16}},['1 Coder','2 Reviewer','3 Fixer'].map(function(s){return React.createElement('div',{key:s,style:{width:56,height:56,borderRadius:'50%',background:'var(--blue-bg)',color:'var(--blue-t)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14}},s)})),
+      React.createElement('div',{style:{color:'var(--blue)',fontWeight:500}},'3 AI agents are generating, reviewing, and fixing your code...')):null,
+    result&&!result.error?React.createElement('div',{style:{flex:1,overflow:'auto'}},
+      React.createElement('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
+        React.createElement('span',{className:'badge b-'+(result.stages?.reviewer?.passed?'green':'amber')},result.stages?.reviewer?.passed?'PASSED':'FIXED'),
+        React.createElement('span',{className:'badge b-blue'},'Rating: '+(result.rating_initial||'?')+'/10'),
+        React.createElement('span',{className:'badge b-blue'},result.iterations+' iteration(s)'),
+        React.createElement('button',{className:'bs sm',onClick:function(){navigator.clipboard?.writeText(result.final_code||'')}},'Copy Final Code')),
+      React.createElement('div',{style:{fontWeight:600,marginBottom:6}},'Final Approved Code:'),
+      React.createElement(Fmt,{text:result.final_code||''}),
+      React.createElement('details',{style:{marginTop:14,border:'1px solid var(--border)',borderRadius:8,padding:12}},
+        React.createElement('summary',{style:{cursor:'pointer',fontWeight:600,fontSize:13}},'View All Agent Stages'),
+        React.createElement('div',{style:{marginTop:10}},
+          React.createElement('h4',{style:{color:'var(--blue)',marginBottom:4}},'Stage 1: Coder Agent'),React.createElement(Fmt,{text:result.stages?.coder?.code||''}),
+          React.createElement('h4',{style:{color:'var(--amber)',marginTop:12,marginBottom:4}},'Stage 2: Reviewer ('+result.rating_initial+'/10)'),React.createElement(Fmt,{text:result.stages?.reviewer?.review||''}),
+          result.stages?.fixer?React.createElement('div',null,
+            React.createElement('h4',{style:{color:'var(--green)',marginTop:12,marginBottom:4}},'Stage 3: Fixer'),React.createElement(Fmt,{text:result.stages?.fixer?.fixedCode||''}),
+            React.createElement('h4',{style:{color:'var(--green)',marginTop:12,marginBottom:4}},'Stage 4: Re-Review'),React.createElement(Fmt,{text:result.stages?.fixer?.fixReview||''})):null))):null,
+    result&&result.error?React.createElement('div',{style:{color:'var(--red)',padding:20}},'Error: '+result.error):null);
+}
+
 function App(){
   const[token,setToken]=useState(localStorage.getItem('at'));const[user,setUser]=useState(()=>{try{return JSON.parse(localStorage.getItem('au'))}catch{return null}});
   const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);
   useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);
   function logout(){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null)}
   if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});
-  const tabs=[{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'pipeline',l:'Code Pipeline',i:'\u2728'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'gen',l:'Code Generator',i:'\u26A1'}];
+  const tabs=[{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'agents',l:'Agent Pipeline',i:'\uD83D\uDE80'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'pipeline',l:'Code Tools',i:'\u2728'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'gen',l:'Code Generator',i:'\u26A1'}];if(user.role==='admin')tabs.push({id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100vh'}},
     React.createElement('div',{className:'header'},
       React.createElement('div',{style:{background:'var(--blue)',color:'#fff',borderRadius:6,padding:'3px 8px',fontWeight:900,fontSize:12}},'SAP'),
       React.createElement('div',null,React.createElement('div',{style:{fontWeight:700,fontSize:14}},'ABAP AI Studio'),React.createElement('div',{style:{fontSize:11,color:'var(--fg3)'}},'DEV 192.168.144.174 \u00b7 Client 210 \u00b7 S4D')),
       React.createElement('div',{style:{marginLeft:'auto',display:'flex',alignItems:'center',gap:10}},sapOk?React.createElement('span',{className:'badge b-green'},'\u25CF SAP Connected \u2014 S4D'):React.createElement('span',{className:'badge b-amber'},'\u25CB SAP Connecting...'),React.createElement('span',{style:{fontSize:13,fontWeight:600}},user.display_name||user.username),React.createElement('button',{className:'bg sm',onClick:logout},'Logout'))),
     React.createElement('div',{className:'main'},
-      React.createElement('div',{className:'sidebar'},tabs.map(t=>React.createElement('button',{key:t.id,className:`si ${tab===t.id?'a':''}`,onClick:()=>setTab(t.id)},React.createElement('span',{style:{fontSize:15,width:18,textAlign:'center'}},t.i),t.l)),React.createElement('div',{style:{flex:1}}),React.createElement('div',{style:{padding:'6px 10px',fontSize:10,color:'var(--fg4)',borderTop:'1px solid var(--border)'}},`v2.1 \u00b7 Cloud Edition`)),
+      React.createElement('div',{className:'sidebar'},tabs.map(t=>React.createElement('button',{key:t.id,className:`si ${tab===t.id?'a':''}`,onClick:()=>setTab(t.id)},React.createElement('span',{style:{fontSize:15,width:18,textAlign:'center'}},t.i),t.l)),React.createElement('div',{style:{flex:1}}),React.createElement('div',{style:{padding:'6px 10px',fontSize:10,color:'var(--fg4)',borderTop:'1px solid var(--border)'}},`v3.0 \u00b7 Cloud Edition`)),
       React.createElement('div',{className:'content'},
         tab==='chat'&&React.createElement(Chat,{token}),tab==='source'&&React.createElement(Source,{token}),tab==='pipeline'&&React.createElement(Pipeline,{token}),
-        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='gen'&&React.createElement(Gen,{token}))));
+        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='gen'&&React.createElement(Gen,{token}),tab==='admin'&&React.createElement(Admin,{token}),tab==='agents'&&React.createElement(AgentPipeline,{token}))));
 }
 ReactDOM.render(React.createElement(App),document.getElementById('root'));
 </script>
