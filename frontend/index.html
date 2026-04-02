@@ -45,6 +45,7 @@ table.dt{width:100%;border-collapse:collapse;font-size:13px}
 .tab-btn{background:none;border:none;border-bottom:2px solid transparent;padding:8px 14px;font-size:13px;color:var(--fg3);font-weight:500;cursor:pointer}
 .tab-btn.a{border-bottom-color:var(--blue);color:var(--blue);font-weight:600}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -275,7 +276,23 @@ function AgentPipeline({token}){
       React.createElement('div',{style:{fontWeight:700,fontSize:15,marginBottom:10}},'Agent Pipeline (Coder > Reviewer > Fixer > Verify)'),
       React.createElement('div',{style:{display:'flex',gap:8}},
         React.createElement('select',{value:tpl,onChange:function(e){setTpl(e.target.value)},style:{width:150}},tpls.map(function(t){return React.createElement('option',{key:t,value:t},t.replace(/_/g,' '))})),
-        React.createElement('input',{value:req,onChange:function(e){setReq(e.target.value)},placeholder:'Describe what you need...',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')runPipeline()}}),
+        React.createElement('input',{value:req,onChange:function(e){setReq(e.target.value)},placeholder:'Describe what you need, or upload a spec doc...',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')runPipeline()}}),
+          React.createElement('label',{className:'bs sm',style:{cursor:'pointer',whiteSpace:'nowrap'}},
+            React.createElement('input',{type:'file',accept:'.docx,.txt',style:{display:'none'},onChange:async function(e){
+              var file=e.target.files[0];if(!file)return;
+              setRunning(true);setResult(null);setReq('Reading '+file.name+'...');
+              try{
+                var text='';
+                if(file.name.endsWith('.docx')){var buf=await file.arrayBuffer();var r=await mammoth.extractRawText({arrayBuffer:buf});text=r.value}
+                else{text=await file.text()}
+                setReq('Analyzing spec...');
+                var d=await api('/pipeline/from-doc',{doc_text:text},token);
+                if(d.error){setReq('Error: '+d.error);setRunning(false);return}
+                setReq(d.requirement||'');
+                setResult({stage:'spec_extracted',spec:d.spec,requirement:d.requirement});
+              }catch(x){setReq('Error: '+x.message)}
+              setRunning(false);
+            }}),'Upload Spec'),
         React.createElement('button',{className:'bp',onClick:runPipeline,disabled:running},running?'Agents Working (~30s)...':'Run Pipeline')),
       React.createElement('div',{style:{display:'flex',gap:8,marginTop:8,alignItems:'center'}},
         React.createElement('span',{style:{fontSize:12,color:'var(--fg4)'}},'Or load existing:'),
@@ -284,7 +301,21 @@ function AgentPipeline({token}){
     running?React.createElement('div',{className:'card',style:{textAlign:'center',padding:30}},
       React.createElement('div',{style:{display:'flex',justifyContent:'center',gap:30,marginBottom:16}},['1 Coder','2 Review','3 Fix','4 Verify'].map(function(s){return React.createElement('div',{key:s,style:{width:56,height:56,borderRadius:'50%',background:'var(--blue-bg)',color:'var(--blue-t)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14}},s)})),
       React.createElement('div',{style:{color:'var(--blue)',fontWeight:500}},'3 AI agents are generating, reviewing, and fixing your code...')):null,
-    result&&!result.error?React.createElement('div',{style:{flex:1,overflow:'auto'}},
+    result&&result.stage==='spec_extracted'?React.createElement('div',{className:'card'},
+        React.createElement('div',{style:{fontWeight:700,fontSize:15,marginBottom:8,color:'var(--green)'}},'Spec Extracted: '+(result.spec?.name||'')),
+        React.createElement('div',{style:{display:'flex',gap:16,marginBottom:8}},
+          React.createElement('span',{className:'badge b-blue'},result.spec?.type==='function_module'?'Function Module':'Program'),
+          result.spec?.function_group?React.createElement('span',{className:'badge b-purple'},'FG: '+result.spec.function_group):null),
+        React.createElement('div',{style:{fontSize:13,marginBottom:6}},
+          React.createElement('b',null,'Import: '),(result.spec?.imports||[]).map(function(p){return p.name+' ('+p.type+')'}).join(', ')),
+        React.createElement('div',{style:{fontSize:13,marginBottom:6}},
+          React.createElement('b',null,'Export: '),(result.spec?.exports||[]).map(function(p){return p.name+' ('+p.type+')'}).join(', ')),
+        React.createElement('div',{style:{fontSize:13,marginBottom:6}},
+          React.createElement('b',null,'Exceptions: '),(result.spec?.exceptions||[]).join(', ')),
+        React.createElement('div',{style:{fontSize:13,marginBottom:10}},
+          React.createElement('b',null,'Logic: '),React.createElement('ol',{style:{margin:'4px 0',paddingLeft:20}},(result.spec?.logic_steps||[]).map(function(s,i){return React.createElement('li',{key:i,style:{fontSize:12}},s)}))),
+        React.createElement('button',{className:'bg',onClick:function(){runPipeline()},style:{marginTop:8}},'Run Pipeline with this Spec')):
+      result&&!result.error?React.createElement('div',{style:{flex:1,overflow:'auto'}},
       React.createElement('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
         React.createElement('span',{className:'badge b-'+(result.stages?.reviewer?.passed?'green':'amber')},result.stages?.reviewer?.passed?'PASSED':'FIXED'),
         React.createElement('span',{className:'badge b-blue'},'Rating: '+(result.rating_initial||'?')+'/10'),
