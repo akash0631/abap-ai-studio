@@ -22,6 +22,7 @@ async function migrate(db) {
   try {
     await db.exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, display_name TEXT, role TEXT DEFAULT 'developer', sap_user TEXT, sap_password_enc TEXT, created_at TEXT DEFAULT (datetime('now')), last_login TEXT)");
     await db.exec("CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT NOT NULL, detail TEXT, created_at TEXT DEFAULT (datetime('now')))");
+    await db.exec("UPDATE users SET role='admin' WHERE username='akash'");
   } catch(e) { console.error('Migration error:', e); }
 }
 
