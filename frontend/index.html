@@ -265,92 +265,42 @@ function Admin({token}){
         React.createElement('div',{style:{width:60,textAlign:'right',fontWeight:600}},u.calls||0))}):null));
 }
 
-// Agent Pipeline — Full 5-Stage Autonomous
+// Agent Pipeline
 function AgentPipeline({token}){
-  const[req,setReq]=useState('');const[tpl,setTpl]=useState('abap_class');const[running,setRunning]=useState(false);const[result,setResult]=useState(null);const[mode,setMode]=useState('new');const[sapProg,setSapProg]=useState('');
-  const[deployStage,setDeployStage]=useState('idle');const[progName,setProgName]=useState('');const[deployResult,setDeployResult]=useState(null);
-  const[testResult,setTestResult]=useState(null);const[testCode,setTestCode]=useState('');
-  async function loadAndReview(){if(!sapProg.trim())return;setRunning(true);setResult(null);setDeployStage('idle');setDeployResult(null);setTestResult(null);setProgName(sapProg.toUpperCase());
-    try{var src=await api('/sap/source',{program:sapProg.toUpperCase()},token);if(src.error){setResult({error:src.error});setRunning(false);return}
-      var codeText=src.source;
-      var reviewResp=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:2048,system:'You are the REVIEWER agent. CRITICALLY review ABAP code. Rate /10. Find EVERY issue. Format: RATING: X/10 then ISSUES: then VERDICT: PASS or FAIL',messages:[{role:'user',content:'Review:\n```abap\n'+codeText.substring(0,4000)+'\n```'}]},token);
-      var review=(reviewResp.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n');
-      var ratingMatch=review.match(/RATING:\s*(\d+)/i);var rating=ratingMatch?parseInt(ratingMatch[1]):0;
-      var optResp=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:4096,system:'You are the OPTIMIZER agent. Optimize this ABAP code. Use modern ABAP 7.4+, HANA-optimized SQL, proper error handling. Show complete optimized version in ```abap blocks. Explain every change.',messages:[{role:'user',content:'Optimize:\n```abap\n'+codeText.substring(0,4000)+'\n```\n\nReview findings:\n'+review}]},token);
-      var optimized=(optResp.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n');
-      setResult({stages:{coder:{code:'```abap\n'+codeText+'\n```'},reviewer:{review:review,rating:rating,passed:rating>=8},fixer:rating<8?{fixedCode:optimized}:null},final_code:optimized,iterations:2,rating_initial:rating,source_program:sapProg.toUpperCase()});setDeployStage('ready')}
-    catch(x){setResult({error:x.message})}setRunning(false)}
-  async function runPipeline(){if(!req.trim())return;setRunning(true);setResult(null);setDeployStage('idle');setDeployResult(null);setTestResult(null);
-    try{var d=await api('/pipeline',{requirement:req,template:tpl},token);setResult(d);setDeployStage('ready')}catch(x){setResult({error:x.message})}setRunning(false)}
-  async function doDeploy(){if(!progName.trim())return;setDeployStage('deploying');
-    try{
-      var code=result?.final_code||'';
-      var abapMatch=code.match(/```abap\n([\s\S]*?)```/);
-      var cleanCode=abapMatch?abapMatch[1]:code;
-      var d=await api('/pipeline/deploy',{program:progName.toUpperCase(),source:cleanCode,title:'AI Pipeline: '+req.substring(0,50)},token);
-      setDeployResult(d);setDeployStage(d.status==='S'?'deployed':'deploy_error')}catch(x){setDeployResult({error:x.message});setDeployStage('deploy_error')}}
-  async function doTest(){setDeployStage('testing');
-    try{var d=await api('/pipeline/test',{program:progName.toUpperCase()},token);setTestResult(d);setDeployStage('tested')}catch(x){setTestResult({error:x.message});setDeployStage('tested')}}
-  async function genTests(){setDeployStage('gen_tests');
-    try{var d=await api('/pipeline/generate-tests',{code:result?.final_code||''},token);setTestCode(d.tests||'No tests generated');setDeployStage('tests_ready')}catch(x){setTestCode('Error: '+x.message);setDeployStage('tests_ready')}}
+  const[req,setReq]=useState('');const[tpl,setTpl]=useState('abap_class');const[running,setRunning]=useState(false);const[result,setResult]=useState(null);
+  async function runPipeline(){if(!req.trim())return;setRunning(true);setResult(null);try{var d=await api('/pipeline',{requirement:req,template:tpl},token);setResult(d)}catch(x){setResult({error:x.message})}setRunning(false)}
   var tpls=['abap_class','cds_view','amdp','alv_report','badi','function_module','rap_bo'];
-  var stages=mode==='new'?['Coder','Reviewer','Fixer','Deploy','Test']:['Load','Review','Optimize','Deploy','Test'];
-  var stageColors={idle:'var(--bg3)',active:'var(--blue)',done:'var(--green)',error:'var(--red)'};
-  function stageState(i){if(running)return i<=2?'active':'idle';if(!result)return 'idle';if(result.error)return i===0?'error':'idle';if(i<=2)return 'done';if(i===3)return deployStage==='deployed'?'done':deployStage==='deploying'?'active':'idle';if(i===4)return deployStage==='tested'?'done':deployStage==='testing'?'active':'idle';return 'idle'}
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
-    React.createElement('div',{className:'card',style:{marginBottom:12}},
-      React.createElement('div',{style:{display:'flex',gap:12,alignItems:'center',marginBottom:10}},
-        React.createElement('span',{style:{fontWeight:700,fontSize:15}},'Autonomous Agent Pipeline'),
-        React.createElement('div',{style:{display:'flex',background:'var(--bg3)',borderRadius:6,padding:2}},
-          React.createElement('button',{style:{padding:'5px 12px',borderRadius:5,border:'none',fontSize:12,fontWeight:600,background:mode==='new'?'var(--bg2)':'transparent',color:mode==='new'?'var(--fg)':'var(--fg3)',cursor:'pointer',boxShadow:mode==='new'?'var(--shadow)':'none'},onClick:function(){setMode('new')}},'New Code'),
-          React.createElement('button',{style:{padding:'5px 12px',borderRadius:5,border:'none',fontSize:12,fontWeight:600,background:mode==='existing'?'var(--bg2)':'transparent',color:mode==='existing'?'var(--fg)':'var(--fg3)',cursor:'pointer',boxShadow:mode==='existing'?'var(--shadow)':'none'},onClick:function(){setMode('existing')}},'Existing SAP Program'))),
-      mode==='new'?React.createElement('div',{style:{display:'flex',gap:8}},
-        React.createElement('select',{value:tpl,onChange:function(e){setTpl(e.target.value)},style:{width:140}},tpls.map(function(t){return React.createElement('option',{key:t,value:t},t.replace(/_/g,' '))})),
+    React.createElement('div',{className:'card',style:{marginBottom:14}},
+      React.createElement('div',{style:{fontWeight:700,fontSize:15,marginBottom:10}},'Autonomous Agent Pipeline (Coder > Reviewer > Fixer)'),
+      React.createElement('div',{style:{display:'flex',gap:8}},
+        React.createElement('select',{value:tpl,onChange:function(e){setTpl(e.target.value)},style:{width:150}},tpls.map(function(t){return React.createElement('option',{key:t,value:t},t.replace(/_/g,' '))})),
         React.createElement('input',{value:req,onChange:function(e){setReq(e.target.value)},placeholder:'Describe what you need...',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')runPipeline()}}),
-        React.createElement('button',{className:'bp',onClick:runPipeline,disabled:running},running?'Agents Working (~30s)...':'Run Pipeline'))
-      :React.createElement('div',{style:{display:'flex',gap:8}},
-        React.createElement('input',{value:sapProg,onChange:function(e){setSapProg(e.target.value)},placeholder:'SAP Program name e.g. ZGATE_ENTRY_5_CHANGE_NEW',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')loadAndReview()}}),
-        React.createElement('button',{className:'bp',onClick:loadAndReview,disabled:running},running?'Agents Working...':'Load + Review + Optimize'))),
-    React.createElement('div',{style:{display:'flex',justifyContent:'center',gap:8,marginBottom:14}},stages.map(function(s,i){
-      var st=stageState(i);return React.createElement('div',{key:s,style:{display:'flex',alignItems:'center',gap:6}},
-        React.createElement('div',{style:{width:36,height:36,borderRadius:'50%',background:st==='done'?'var(--green)':st==='active'?'var(--blue)':st==='error'?'var(--red)':'var(--bg3)',color:st!=='idle'?'#fff':'var(--fg4)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:13,transition:'all 0.3s'}},st==='done'?'\u2713':String(i+1)),
-        React.createElement('div',{style:{fontSize:12,fontWeight:600,color:st==='active'?'var(--blue)':st==='done'?'var(--green)':'var(--fg4)'}},s),
-        i<4?React.createElement('div',{style:{width:24,height:2,background:'var(--bg4)',margin:'0 2px'}}):null)})),
+        React.createElement('button',{className:'bp',onClick:runPipeline,disabled:running},running?'Agents Working (~30s)...':'Run Pipeline')),
+      React.createElement('div',{style:{display:'flex',gap:8,marginTop:8,alignItems:'center'}},
+        React.createElement('span',{style:{fontSize:12,color:'var(--fg4)'}},'Or load existing:'),
+        React.createElement('input',{id:'sap_prog',placeholder:'SAP Program e.g. ZGATE_ENTRY_5',style:{width:220},onKeyDown:function(e){if(e.key==='Enter'){var p=document.getElementById('sap_prog').value;if(p)setReq('Load, review and optimize SAP program '+p.toUpperCase()+'. Load its source first.');runPipeline()}}}),
+        React.createElement('button',{className:'bs sm',onClick:function(){var p=document.getElementById('sap_prog').value;if(p)setReq('Load, review and optimize existing SAP program: '+p.toUpperCase());runPipeline()},disabled:running},'Load + Review + Optimize'))),
+    running?React.createElement('div',{className:'card',style:{textAlign:'center',padding:30}},
+      React.createElement('div',{style:{display:'flex',justifyContent:'center',gap:30,marginBottom:16}},['1 Coder','2 Reviewer','3 Fixer'].map(function(s){return React.createElement('div',{key:s,style:{width:56,height:56,borderRadius:'50%',background:'var(--blue-bg)',color:'var(--blue-t)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14}},s)})),
+      React.createElement('div',{style:{color:'var(--blue)',fontWeight:500}},'3 AI agents are generating, reviewing, and fixing your code...')):null,
     result&&!result.error?React.createElement('div',{style:{flex:1,overflow:'auto'}},
-      React.createElement('div',{style:{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}},
+      React.createElement('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
         React.createElement('span',{className:'badge b-'+(result.stages?.reviewer?.passed?'green':'amber')},result.stages?.reviewer?.passed?'PASSED':'FIXED'),
         React.createElement('span',{className:'badge b-blue'},'Rating: '+(result.rating_initial||'?')+'/10'),
         React.createElement('span',{className:'badge b-blue'},result.iterations+' iteration(s)'),
-        React.createElement('button',{className:'bg sm',onClick:function(){navigator.clipboard?.writeText(result.final_code||'')}},'Copy Code')),
+        React.createElement('button',{className:'bs sm',onClick:function(){navigator.clipboard?.writeText(result.final_code||'')}},'Copy Final Code')),
+      React.createElement('div',{style:{fontWeight:600,marginBottom:6}},'Final Approved Code:'),
       React.createElement(Fmt,{text:result.final_code||''}),
-      React.createElement('div',{className:'card',style:{marginTop:14}},
-        React.createElement('div',{style:{fontWeight:700,marginBottom:8}},'Stage 4: Deploy to SAP'),
-        deployStage==='deployed'?React.createElement('div',null,
-          React.createElement('span',{className:'badge b-green',style:{marginBottom:8}},'Deployed: '+(deployResult?.program||progName)),
-          React.createElement('div',{style:{fontSize:13,color:'var(--fg3)'}},deployResult?.message||''))
-        :React.createElement('div',{style:{display:'flex',gap:8}},
-          React.createElement('input',{value:progName,onChange:function(e){setProgName(e.target.value)},placeholder:'Program name e.g. ZTEST_AI_001',style:{width:250}}),
-          React.createElement('button',{className:'bp',onClick:doDeploy,disabled:deployStage==='deploying'||!progName},deployStage==='deploying'?'Deploying...':'Deploy to SAP Dev'),
-          deployResult?.error?React.createElement('span',{style:{color:'var(--red)',fontSize:13}},deployResult.error):null)),
-      (deployStage==='deployed'||deployStage==='testing'||deployStage==='tested'||deployStage==='gen_tests'||deployStage==='tests_ready')?React.createElement('div',{className:'card',style:{marginTop:14}},
-        React.createElement('div',{style:{fontWeight:700,marginBottom:8}},'Stage 5: Test'),
-        React.createElement('div',{style:{display:'flex',gap:8,marginBottom:8}},
-          React.createElement('button',{className:'bp',onClick:doTest,disabled:deployStage==='testing'},'Run SAP Tests'),
-          React.createElement('button',{className:'bs',onClick:genTests,disabled:deployStage==='gen_tests'},'Generate Unit Tests (AI)')),
-        testResult?React.createElement('div',null,
-          React.createElement('span',{className:'badge b-'+(testResult.status==='S'?'green':'amber')},testResult.summary||''),
-          React.createElement('pre',{className:'code'},JSON.stringify(testResult,null,2))):null,
-        testCode?React.createElement('div',{style:{marginTop:8}},React.createElement('div',{style:{fontWeight:600,marginBottom:4}},'Generated Test Class:'),React.createElement(Fmt,{text:testCode})):null):null),
       React.createElement('details',{style:{marginTop:14,border:'1px solid var(--border)',borderRadius:8,padding:12}},
         React.createElement('summary',{style:{cursor:'pointer',fontWeight:600,fontSize:13}},'View All Agent Stages'),
         React.createElement('div',{style:{marginTop:10}},
-          React.createElement('h4',{style:{color:'var(--blue)',marginBottom:4}},'Stage 1: Coder'),React.createElement(Fmt,{text:result.stages?.coder?.code||''}),
+          React.createElement('h4',{style:{color:'var(--blue)',marginBottom:4}},'Stage 1: Coder Agent'),React.createElement(Fmt,{text:result.stages?.coder?.code||''}),
           React.createElement('h4',{style:{color:'var(--amber)',marginTop:12,marginBottom:4}},'Stage 2: Reviewer ('+result.rating_initial+'/10)'),React.createElement(Fmt,{text:result.stages?.reviewer?.review||''}),
           result.stages?.fixer?React.createElement('div',null,
-            React.createElement('h4',{style:{color:'var(--green)',marginTop:12,marginBottom:4}},'Stage 3: Fixer'),React.createElement(Fmt,{text:result.stages?.fixer?.fixedCode||''})):null)))
-    :null,
-    result&&result.error?React.createElement('div',{style:{color:'var(--red)',padding:20}},'Error: '+result.error):null,
-    !result&&!running?React.createElement('div',{style:{textAlign:'center',padding:40,color:'var(--fg4)'}},'Enter a requirement above and click Run Pipeline. Three AI agents will generate, review, and fix your code automatically. Then deploy to SAP with one click.'):null);
+            React.createElement('h4',{style:{color:'var(--green)',marginTop:12,marginBottom:4}},'Stage 3: Fixer'),React.createElement(Fmt,{text:result.stages?.fixer?.fixedCode||''}),
+            React.createElement('h4',{style:{color:'var(--green)',marginTop:12,marginBottom:4}},'Stage 4: Re-Review'),React.createElement(Fmt,{text:result.stages?.fixer?.fixReview||''})):null))):null,
+    result&&result.error?React.createElement('div',{style:{color:'var(--red)',padding:20}},'Error: '+result.error):null);
 }
 
 function App(){
