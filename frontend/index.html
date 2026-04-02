@@ -227,7 +227,22 @@ function Gen({token}){
 function Pipeline({token}){
   const[code,setCode]=useState('');const[action,setAction]=useState('optimize');const[result,setResult]=useState('');const[loading,setLoading]=useState(false);
   const actions={optimize:'Optimize this ABAP code. Show every change. Use modern ABAP 7.4+ syntax, HANA-optimized SQL, proper error handling. Provide the complete optimized version.',review:'Do a complete code review. Rate /10. Check: 1) Code quality 2) Error handling 3) Security (SQL injection, auth) 4) Performance (SELECT in LOOP, missing indexes) 5) S/4HANA compatibility 6) Naming conventions 7) Missing comments. Give specific line numbers.',modernize:'Convert this classic ABAP to modern ABAP 7.4+ syntax. Replace: MOVE→inline, READ TABLE→table expression, old SELECT→new escaped syntax, IF/CASE→COND/SWITCH, loop aggregation→REDUCE, CREATE OBJECT→NEW, string concatenation→string templates. Show complete converted code.',security:'Security audit this ABAP code. Check for: SQL injection via dynamic WHERE, missing authority checks (AUTHORITY-CHECK), hardcoded credentials, buffer overflow risks, open SQL risks, missing input validation, ABAP injection via GENERATE SUBROUTINE POOL. Rate severity of each finding.',unittest:'Generate complete ABAP Unit test class for this code. Include: setup method, test methods for each public method, positive and negative test cases, use cl_abap_unit_assert, mock dependencies where needed.'};
-  async function go(){if(!code.trim())return;setLoading(true);setResult('');try{const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:8192,system:SYS,messages:[{role:'user',content:`${actions[action]}\n\n\`\`\`abap\n${code}\n\`\`\``}]},token);setResult((d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'))}catch(x){setResult('Error: '+x.message)}setLoading(false)}
+  async function go(){if(!code.trim())return;setLoading(true);setResult('');
+    var lineCount=code.split('\n').length;
+    try{
+      if(lineCount>=400&&(action==='optimize'||action==='modernize')){
+        setResult('Large code detected ('+lineCount+' lines). Processing section-by-section...');
+        var d=await api('/pipeline/smart-optimize',{code:code,mode:action},token);
+        if(d.mode==='sectioned'){
+          var output='## Review (Full '+d.lines+' lines analyzed)\n\n'+d.review+'\n\n---\n\n## Optimized Code ('+d.sections+' sections)\n\n';
+          (d.optimized_sections||[]).forEach(function(s,i){output+='### Section '+(i+1)+' (Lines '+(s.start+1)+'-'+s.end+')\n\n'+s.optimized+'\n\n'});
+          setResult(output);
+        }else{setResult(d.result||'No output')}
+      }else{
+        var d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:8192,system:SYS,messages:[{role:'user',content:actions[action]+'\n\n```abap\n'+code+'\n```'}]},token);
+        setResult((d.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n'));
+      }
+    }catch(x){setResult('Error: '+x.message)}setLoading(false)}
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
     React.createElement('div',{className:'tabs-row'},['optimize','review','modernize','security','unittest'].map(a=>React.createElement('button',{key:a,className:`tab-btn ${action===a?'a':''}`,onClick:()=>setAction(a)},{optimize:'\u2728 Optimize',review:'\uD83D\uDD0D Review',modernize:'\uD83D\uDD04 Modernize',security:'\uD83D\uDD12 Security Audit',unittest:'\uD83E\uDDEA Unit Tests'}[a]))),
     React.createElement('div',{style:{display:'flex',gap:12,flex:1,overflow:'hidden'}},
