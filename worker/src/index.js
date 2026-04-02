@@ -345,7 +345,7 @@ export default {
         const reviewResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-            system:'You are the REVIEWER agent checking ABAP code quality.\n\nRate /10. Check THESE specific things:\n1. Does the code match the stated requirement? (no extra parameters/exceptions)\n2. Does it call any non-existent function modules? (flag immediately)\n3. ALPHA = IN vs TO_UPPER — are they used correctly? (ALPHA adds zeros, TO_UPPER changes case)\n4. SELECT * usage (should be specific fields)\n5. Missing RETURN after error checks\n6. Proper TRY...CATCH\n7. HANA performance (no SELECT in LOOP, no LTRIM in JOINs)\n8. Naming conventions (LV_, LT_, LS_ prefixes)\n9. Over-engineering: hash/salt/crypto when spec says plain text? Unauthorized auth objects?\n10. Interface compliance: extra parameters not in the requirement?\n\nOutput format: RATING: X/10 then ISSUES: numbered list then VERDICT: PASS or FAIL',
+            system:'You are the REVIEWER agent. Rate /10. Check: 1)Interface matches requirement 2)No non-existent FM calls 3)ALPHA vs TO_UPPER used correctly 4)No SELECT * 5)Missing RETURN 6)TRY CATCH 7)No over-engineering (hash/crypto when spec says plain text) 8)No unauthorized params/exceptions 9)Naming conventions. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',
             messages:[{role:'user',content:'Review this ABAP code:\n'+generatedCode}]})});
         const reviewData=await reviewResp.json();
         const review=(reviewData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -362,7 +362,7 @@ export default {
           const fixResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
             headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
             body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,
-              system:KB+'\nYou are the FIXER agent. Fix ONLY issues from the review - do NOT add features, parameters, exceptions, or FM calls not in the original requirement. Do NOT replace simple logic with crypto/hashing unless asked. Do NOT add non-existent AUTHORITY-CHECK objects or logging FMs. ALPHA=IN is for leading zeros, TO_UPPER for case conversion - never confuse them. Keep the SAME interface. Output COMPLETE corrected code in ```abap blocks - never truncate.',
+              system:KB+'\nYou are the FIXER agent. Fix ONLY review issues. No extra features/params/exceptions. No crypto unless asked. No non-existent FMs. ALPHA=IN for numbers, TO_UPPER for text. Keep SAME interface. Output COMPLETE code in ```abap blocks.',
               messages:[{role:'user',content:'Original code:\n'+generatedCode+'\n\nReview findings:\n'+review+'\n\nFix ALL issues and provide complete corrected code.'}]})});
           const fixData=await fixResp.json();
           fixedCode=(fixData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -371,7 +371,7 @@ export default {
           const reReviewResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
             headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
             body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-              system:'You are the REVIEWER agent. Rate this fixed ABAP code /10. Brief verdict only. Format: RATING: X/10 VERDICT: PASS or FAIL',
+              system:'You are the REVIEWER agent. Rate /10. Check: 1)Interface matches requirement 2)No non-existent FM calls 3)ALPHA vs TO_UPPER used correctly 4)No SELECT * 5)Missing RETURN 6)TRY CATCH 7)No over-engineering (hash/crypto when spec says plain text) 8)No unauthorized params/exceptions 9)Naming conventions. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',
               messages:[{role:'user',content:'Review this fixed code:\n'+fixedCode}]})});
           const reReviewData=await reReviewResp.json();
           fixReview=(reReviewData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
