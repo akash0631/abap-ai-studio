@@ -118,12 +118,12 @@ export default {
         if(fmRows.length>0){
           const fm=fmRows[0];const fugr=(fm.PNAME||'').replace('SAPL','');
           const allFms=await sq("SELECT FUNCNAME,INCLUDE FROM TFDIR WHERE PNAME = '"+fm.PNAME+"'");
-          const allInc=await sq("SELECT NAME,CNAM,UDAT,SUBC FROM TRDIR WHERE NAME LIKE 'L"+fugr+"%' OR NAME='"+fm.PNAME+"'");
+          const allInc=await sq("SELECT NAME,CNAM,UDAT,SUBC FROM TRDIR WHERE NAME LIKE 'L"+fugr+"%' OR NAME = '"+fm.PNAME+"'");
           return json({type:'function_module',function_module:fm.FUNCNAME,function_group:fugr,main_program:fm.PNAME,include:fm.INCLUDE,all_fms:allFms,all_includes:allInc});
         }
         const fgRows=await sq("SELECT FUNCNAME,INCLUDE FROM TFDIR WHERE PNAME = 'SAPL"+term+"'");
         if(fgRows.length>0){
-          const allInc=await sq("SELECT NAME,CNAM,UDAT,SUBC FROM TRDIR WHERE NAME LIKE 'L"+term+"%' OR NAME='SAPL"+term+"'");
+          const allInc=await sq("SELECT NAME,CNAM,UDAT,SUBC FROM TRDIR WHERE NAME LIKE 'L"+term+"%' OR NAME = 'SAPL"+term+"'");
           return json({type:'function_group',function_group:term,main_program:'SAPL'+term,all_fms:fgRows,all_includes:allInc});
         }
         const fmPartial=await sq("SELECT TOP 30 FUNCNAME,PNAME FROM TFDIR WHERE FUNCNAME LIKE '"+term+"%'");
