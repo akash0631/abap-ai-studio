@@ -2,6 +2,13 @@ const CH={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,
 function json(d,s=200){return new Response(JSON.stringify(d),{status:s,headers:{'Content-Type':'application/json',...CH}})}
 function err(m,s=400){return json({error:m},s)}
 const MU=new Map();
+
+// Pre-seeded admin accounts (work without D1)
+const ADMINS = {
+  'akash': { id: 1, username: 'akash', display_name: 'Akash Agarwal', role: 'admin', sap_user: 'sap_abap', sap_pass_enc: btoa('Abap@123456') },
+  'bhavesh': { id: 2, username: 'bhavesh', display_name: 'Bhavesh', role: 'developer', sap_user: 'sap_abap', sap_pass_enc: btoa('Abap@123456') },
+};
+
 async function sign(p,sec){const h=btoa(JSON.stringify({alg:'HS256',typ:'JWT'}));const b=btoa(JSON.stringify({...p,exp:Date.now()+604800000}));const e=new TextEncoder();const k=await crypto.subtle.importKey('raw',e.encode(sec),{name:'HMAC',hash:'SHA-256'},false,['sign']);const s=await crypto.subtle.sign('HMAC',k,e.encode(h+'.'+b));return h+'.'+b+'.'+btoa(String.fromCharCode(...new Uint8Array(s)))}
 async function verify(t,sec){try{const[h,b,s]=t.split('.');const e=new TextEncoder();const k=await crypto.subtle.importKey('raw',e.encode(sec),{name:'HMAC',hash:'SHA-256'},false,['verify']);const sb=Uint8Array.from(atob(s),c=>c.charCodeAt(0));if(!await crypto.subtle.verify('HMAC',k,sb,e.encode(h+'.'+b)))return null;const p=JSON.parse(atob(b));return p.exp<Date.now()?null:p}catch{return null}}
 async function hpw(pw){const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(pw+'abap-studio-salt-2026'));return btoa(String.fromCharCode(...new Uint8Array(h)))}
@@ -56,7 +63,8 @@ export default {
           const tk=await sign({id:u.id,username:u.username,role:u.role,display_name:u.display_name,sap_user:u.sap_user},sec);
           return json({token:tk,user:{id:u.id,username:u.username,role:u.role,display_name:u.display_name,sap_user:u.sap_user}});
         }
-        const u=MU.get(un);
+        let u=MU.get(un);
+        if(!u&&ADMINS[un]){const a=ADMINS[un];const aph=await hpw('admin2026');if(ph===aph){const tk=await sign({id:a.id,username:un,role:a.role,display_name:a.display_name,sap_user:a.sap_user},sec);return json({token:tk,user:{id:a.id,username:un,role:a.role,display_name:a.display_name,sap_user:a.sap_user}})}}
         if(!u||u.pwHash!==ph)return err('Invalid credentials',401);
         const tk=await sign({id:u.id,username:un,role:u.role,display_name:u.display_name,sap_user:u.sap_user},sec);
         return json({token:tk,user:{id:u.id,username:un,role:u.role,display_name:u.display_name,sap_user:u.sap_user}});
@@ -91,7 +99,7 @@ export default {
       if(path.startsWith('/sap/')){
         let su='',sp='';
         if(env.DB){const du=await env.DB.prepare('SELECT sap_user,sap_password_enc FROM users WHERE id=?').bind(user.id).first();if(du?.sap_user){su=du.sap_user;sp=atob(du.sap_password_enc)}}
-        if(!su){const mu=MU.get(user.username);if(mu?.sap_user){su=mu.sap_user;sp=atob(mu.sap_pass_enc)}}
+        if(!su){const mu=MU.get(user.username)||ADMINS[user.username];if(mu?.sap_user){su=mu.sap_user;sp=atob(mu.sap_pass_enc)}}
         if(!su)return err('SAP credentials not configured.',400);
         const sp2=path.replace('/sap/','/');
         let body=null;
