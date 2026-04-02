@@ -44,6 +44,7 @@ table.dt{width:100%;border-collapse:collapse;font-size:13px}
 .tabs-row{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px}
 .tab-btn{background:none;border:none;border-bottom:2px solid transparent;padding:8px 14px;font-size:13px;color:var(--fg3);font-weight:500;cursor:pointer}
 .tab-btn.a{border-bottom-color:var(--blue);color:var(--blue);font-weight:600}
+@keyframes pulse{0%{opacity:1;transform:scale(1)}50%{opacity:0.7;transform:scale(1.05)}100%{opacity:1;transform:scale(1)}}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 </head>
@@ -268,8 +269,31 @@ function Admin({token}){
 
 // Agent Pipeline
 function AgentPipeline({token}){
-  const[req,setReq]=useState('');const[tpl,setTpl]=useState('abap_class');const[running,setRunning]=useState(false);const[result,setResult]=useState(null);
-  async function runPipeline(){if(!req.trim())return;setRunning(true);setResult(null);try{var d=await api('/pipeline',{requirement:req,template:tpl},token);setResult(d)}catch(x){setResult({error:x.message})}setRunning(false)}
+  const[req,setReq]=useState('');const[tpl,setTpl]=useState('abap_class');const[running,setRunning]=useState(false);const[result,setResult]=useState(null);const[stages,setStages]=useState({1:'idle',2:'idle',3:'idle',4:'idle'});const[stageMsg,setStageMsg]=useState('');
+  async function runPipeline(){if(!req.trim())return;setRunning(true);setResult(null);setStages({1:'idle',2:'idle',3:'idle',4:'idle'});setStageMsg('Starting pipeline...');
+    try{
+      var resp=await fetch(API_BASE+'/pipeline/stream',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({requirement:req,template:tpl})});
+      var reader=resp.body.getReader();var decoder=new TextDecoder();var buf='';var finalResult=null;
+      while(true){
+        var chunk=await reader.read();
+        if(chunk.done)break;
+        buf+=decoder.decode(chunk.value,{stream:true});
+        var lines=buf.split('\n\n');
+        buf=lines.pop()||'';
+        for(var i=0;i<lines.length;i++){
+          var line=lines[i].replace('data: ','');
+          if(!line)continue;
+          try{var ev=JSON.parse(line);
+            if(ev.stage==='done'){finalResult=ev;setStages({1:'done',2:'done',3:'done',4:'done'});setStageMsg('')}
+            else if(ev.stage==='error'){setResult({error:ev.message})}
+            else if(ev.status==='running'){setStages(function(p){var n=Object.assign({},p);n[ev.stage]='running';return n});setStageMsg(ev.message||'')}
+            else if(ev.status==='done'||ev.status==='skipped'){setStages(function(p){var n=Object.assign({},p);n[ev.stage]='done';return n});setStageMsg(ev.status==='done'?(ev.name+' done'+(ev.rating?' — '+ev.rating+'/10':'')):(ev.message||''))}
+          }catch(pe){}
+        }
+      }
+      if(finalResult){setResult({stages:{coder:{code:finalResult.final_code},reviewer:{review:finalResult.review},cross_review:{review:finalResult.cross_review}},final_code:finalResult.final_code,rating_initial:finalResult.rating_initial,cross_rating:finalResult.cross_rating,iterations:finalResult.passed?1:2})}
+    }catch(x){setResult({error:x.message})}
+    setRunning(false)}
   var tpls=['abap_class','cds_view','amdp','alv_report','badi','function_module','rap_bo'];
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
     React.createElement('div',{className:'card',style:{marginBottom:14}},
@@ -299,8 +323,13 @@ function AgentPipeline({token}){
         React.createElement('input',{id:'sap_prog',placeholder:'SAP Program e.g. ZGATE_ENTRY_5',style:{width:220},onKeyDown:function(e){if(e.key==='Enter'){var p=document.getElementById('sap_prog').value;if(p)setReq('Load, review and optimize SAP program '+p.toUpperCase()+'. Load its source first.');runPipeline()}}}),
         React.createElement('button',{className:'bs sm',onClick:function(){var p=document.getElementById('sap_prog').value;if(p)setReq('Load, review and optimize existing SAP program: '+p.toUpperCase());runPipeline()},disabled:running},'Load + Review + Optimize'))),
     running?React.createElement('div',{className:'card',style:{textAlign:'center',padding:30}},
-      React.createElement('div',{style:{display:'flex',justifyContent:'center',gap:30,marginBottom:16}},['1 Coder','2 Review','3 Fix','4 Verify'].map(function(s){return React.createElement('div',{key:s,style:{width:56,height:56,borderRadius:'50%',background:'var(--blue-bg)',color:'var(--blue-t)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14}},s)})),
-      React.createElement('div',{style:{color:'var(--blue)',fontWeight:500}},'3 AI agents are generating, reviewing, and fixing your code...')):null,
+      React.createElement('div',{style:{display:'flex',justifyContent:'center',gap:30,marginBottom:16}},['1 Coder','2 Review','3 Fix','4 Verify'].map(function(s,i){
+            var st=stages[i+1]||'idle';
+            var bg=st==='done'?'#22c55e':st==='running'?'var(--blue)':'var(--blue-bg)';
+            var fg=st==='done'||st==='running'?'#fff':'var(--blue-t)';
+            var anim=st==='running'?'pulse 1.5s infinite':'none';
+            return React.createElement('div',{key:s,style:{width:56,height:56,borderRadius:'50%',background:bg,color:fg,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:13,transition:'all 0.3s',animation:anim}},s)})),
+      React.createElement('div',{style:{color:'var(--blue)',fontWeight:500}},'4 AI agents: generating, reviewing, fixing, and cross-verifying your code...')):null,
     result&&result.stage==='spec_extracted'?React.createElement('div',{className:'card'},
         React.createElement('div',{style:{fontWeight:700,fontSize:15,marginBottom:8,color:'var(--green)'}},'Spec Extracted: '+(result.spec?.name||'')),
         React.createElement('div',{style:{display:'flex',gap:16,marginBottom:8}},
