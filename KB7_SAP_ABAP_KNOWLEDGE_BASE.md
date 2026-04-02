@@ -876,3 +876,67 @@ PROD: 192.168.144.170 (S4P, Client 600) — NEVER touch without explicit approva
 Z_RFC_READ_TABLE     — Read any SAP table as JSON (remote-enabled)
 Z_GET_REPORT_SOURCE  — Read ABAP program source code (remote-enabled)
 ```
+
+---
+
+## 15. ABAP AI STUDIO ARCHITECTURE (v3.2)
+
+### System Overview
+```
+Browser → abap.v2retail.net (CF Worker)
+              ↓ Auth (D1 users table)
+              ↓ Claude AI (KB7 system prompt)
+              ↓ SAP Proxy
+    sap-api.v2retail.net/api/abapstudio/* (x-api-key: abap-studio-sap-2026)
+              ↓
+    Server 36 (IIS + SAP NCo .NET Connector)
+              ↓
+    SAP HANA Dev 192.168.144.174 (S4D, Client 210)
+```
+
+### 5-Stage Autonomous Agent Pipeline
+```
+Stage 1: CODER AGENT      → Claude generates ABAP from requirement
+Stage 2: REVIEWER AGENT   → Claude reviews code, rates /10, finds issues
+Stage 3: FIXER AGENT      → Claude fixes all issues if rating < 8
+Stage 4: DEPLOY AGENT     → Z_UPLOAD_PROGRAM RFC uploads to SAP (human approval)
+Stage 5: TEST AGENT       → Z_RUN_UNIT_TEST RFC runs tests (human reviews)
+```
+
+### Dual Pipeline Modes
+- **New Code:** requirement → generate → review → fix → deploy → test
+- **Existing Program:** load from SAP → review → optimize → deploy → test
+
+### Worker API Endpoints
+```
+POST /auth/login          — Login (D1 persistent)
+POST /auth/register       — Register new developer
+POST /claude              — Claude proxy (auto-injects KB7)
+POST /sap/*               — SAP proxy → sap-api.v2retail.net
+POST /pipeline            — 3-stage pipeline (Coder→Reviewer→Fixer)
+POST /pipeline/deploy     — Deploy to SAP via Z_UPLOAD_PROGRAM
+POST /pipeline/test       — Run tests via Z_RUN_UNIT_TEST
+POST /pipeline/generate-tests — AI generates ABAP Unit tests
+GET  /admin/dashboard     — Admin stats (admin only)
+GET  /admin/audit         — Audit log
+GET  /admin/users         — User management
+```
+
+### D1 Database Tables
+```sql
+users (id, username, password_hash, display_name, role, sap_user, sap_password_enc, created_at, last_login)
+audit_log (id, user_id, action, detail, created_at)
+```
+
+### SAP RFC Dependencies
+```
+Z_RFC_READ_TABLE     — Read any SAP table (exists ✅)
+Z_GET_REPORT_SOURCE  — Read program source (exists ✅)
+Z_UPLOAD_PROGRAM     — Upload/create program (Bhavesh creating)
+Z_RUN_UNIT_TEST      — Run ABAP Unit tests (Bhavesh creating)
+```
+
+### Deployment Rules
+- ALWAYS deploy via PUT /workers/scripts/{name}/content (preserves D1 binding)
+- NEVER use PUT /workers/scripts/{name} (removes bindings)
+- D1 binding: Variable=DB, Database=abap-studio-db
