@@ -576,6 +576,17 @@ function App() {
     setUser(null);
   }
 
+  // Auto-test SAP connection on login
+  useEffect(() => {
+    if (!token || !user?.sap_user) return;
+    setSapConnected(false);
+    api('/sap/connect', {}, token)
+      .then(data => {
+        if (data.connected) setSapConnected(true);
+      })
+      .catch(() => setSapConnected(false));
+  }, [token]);
+
   if (!token || !user) {
     return React.createElement(LoginScreen, { onLogin: (t, u) => { setToken(t); setUser(u); } });
   }
@@ -599,8 +610,8 @@ function App() {
       ),
       React.createElement('div', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 } },
         sapConnected
-          ? React.createElement('span', { className: 'badge badge-green' }, '\u25CF Connected \u2014 ', user.sap_user || 'SAP')
-          : React.createElement('button', { className: 'btn-secondary btn-sm', onClick: () => setShowSapConfig(true) }, 'Connect SAP'),
+          ? React.createElement('span', { className: 'badge badge-green', style: { cursor: 'pointer' }, onClick: () => setShowSapConfig(true) }, '\u25CF SAP Connected \u2014 S4D')
+          : React.createElement('button', { className: 'btn-secondary btn-sm', onClick: () => setShowSapConfig(true) }, user?.sap_user ? 'Testing SAP...' : 'Connect SAP'),
         React.createElement('span', { style: { fontSize: 13, fontWeight: 600 } }, user.display_name || user.username),
         React.createElement('button', { className: 'btn-ghost btn-sm', onClick: logout }, 'Logout')
       )
