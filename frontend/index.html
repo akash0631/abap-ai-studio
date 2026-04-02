@@ -140,22 +140,42 @@ function Source({token}){
       show&&React.createElement('div',{className:'fi',style:{width:'45%',overflow:'auto',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',padding:14,fontSize:13,lineHeight:1.7}},React.createElement(Fmt,{text:aiRes}))));
 }
 
-// ── Repository ──
-function Repo({token}){
-  const[type,setType]=useState('PROG');const[search,setSearch]=useState('');const[results,setResults]=useState([]);
-  async function go(){if(!search.trim())return;const n=search.toUpperCase();let q='';
+// ── Repository with action buttons ──
+function Repo({token,onViewSource,onOptimize}){
+  const[type,setType]=useState('PROG');const[search,setSearch]=useState('');const[results,setResults]=useState([]);const[loading,setLoading]=useState(false);const[aiResult,setAiResult]=useState('');const[showAi,setShowAi]=useState(false);
+  async function go(){if(!search.trim())return;setLoading(true);const n=search.toUpperCase();let q='';
     if(type==='PROG')q=`SELECT TOP 50 NAME,CNAM,UDAT FROM TRDIR WHERE NAME LIKE '${n}%'`;
     else if(type==='FUGR')q=`SELECT TOP 50 FUNCNAME,AREA,PTEXT FROM TFDIR WHERE FUNCNAME LIKE '${n}%'`;
     else if(type==='CLAS')q=`SELECT TOP 50 CLSNAME,DESCRIPT FROM SEOCLASS WHERE CLSNAME LIKE '${n}%'`;
     else q=`SELECT TOP 50 OBJ_NAME,OBJECT,DEVCLASS FROM TADIR WHERE OBJ_NAME LIKE '${n}%'`;
-    try{const d=await api('/sap/query',{sql:q},token);setResults(d.rows||[])}catch(x){setResults([])}}
-  const typeMap={PROG:'repo',FUGR:'func',CLAS:'repo',TADIR:'repo'};
+    try{const d=await api('/sap/query',{sql:q},token);setResults(d.rows||[])}catch(x){setResults([])}setLoading(false)}
+  async function aiAction(name,action){setShowAi(true);setAiResult('Loading source and analyzing...');try{
+    const src=await api('/sap/source',{program:name},token);if(src.error){setAiResult('Error: '+src.error);return}
+    const prompt=action==='review'?`Code review this ABAP program ${name}. Rate /10:\n\\`\\`\\`abap\n${src.source?.substring(0,4000)}\n\\`\\`\\``:`Optimize this ABAP program ${name}. Show every improvement:\n\\`\\`\\`abap\n${src.source?.substring(0,4000)}\n\\`\\`\\``;
+    const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:4096,system:SYS,messages:[{role:'user',content:prompt}]},token);
+    setAiResult((d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'))}catch(x){setAiResult('Error: '+x.message)}}
+  const{cols,data}=cleanRows(results,type==='FUGR'?'func':'repo');
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
     React.createElement('div',{className:'toolbar'},
       React.createElement('select',{value:type,onChange:e=>setType(e.target.value),style:{width:140}},React.createElement('option',{value:'PROG'},'Programs'),React.createElement('option',{value:'FUGR'},'Function Groups'),React.createElement('option',{value:'CLAS'},'Classes'),React.createElement('option',{value:'TADIR'},'All Objects')),
       React.createElement('input',{value:search,onChange:e=>setSearch(e.target.value),placeholder:'e.g. Z*, ZGATE*, ZMM*',style:{flex:1},onKeyDown:e=>e.key==='Enter'&&go()}),
-      React.createElement('button',{className:'bp',onClick:go},'Search')),
-    React.createElement(DataTable,{rows:results,type:typeMap[type]}));
+      React.createElement('button',{className:'bp',onClick:go,disabled:loading},loading?'Searching...':'Search')),
+    React.createElement('div',{style:{display:'flex',gap:12,flex:1,overflow:'hidden'}},
+      React.createElement('div',{style:{flex:showAi?1:undefined,width:showAi?undefined:'100%',overflow:'auto'}},
+        data.length?React.createElement('div',null,
+          React.createElement('div',{style:{fontSize:12,color:'var(--fg3)',marginBottom:6}},data.length+' result(s)'),
+          React.createElement('table',{className:'dt'},
+            React.createElement('thead',null,React.createElement('tr',null,...cols.map(c=>React.createElement('th',{key:c},c)),React.createElement('th',null,'Actions'))),
+            React.createElement('tbody',null,data.map((r,i)=>{const name=r.NAME||r.FUNCNAME||r.CLSNAME||r.OBJ_NAME||'';return React.createElement('tr',{key:i},
+              ...cols.map(c=>React.createElement('td',{key:c,style:c==='NAME'||c==='FUNCNAME'||c==='CLSNAME'?{fontWeight:600,color:'var(--blue)'}:{}},r[c]||'\u2014')),
+              React.createElement('td',{style:{whiteSpace:'nowrap'}},
+                React.createElement('button',{className:'bp sm',style:{marginRight:4},onClick:()=>onViewSource?.(name)},'\uD83D\uDCDD View Source'),
+                React.createElement('button',{className:'bs sm',style:{marginRight:4},onClick:()=>aiAction(name,'review')},'\uD83D\uDD0D Review'),
+                React.createElement('button',{className:'bs sm',onClick:()=>aiAction(name,'optimize')},'\u2728 Optimize')))}))))
+        :React.createElement('div',{style:{color:'var(--fg4)',padding:20,textAlign:'center'}},'Search for Z programs, function groups, or classes')),
+      showAi&&React.createElement('div',{className:'fi',style:{flex:1,overflow:'auto',borderLeft:'1px solid var(--border)',paddingLeft:12}},
+        React.createElement('div',{style:{display:'flex',justifyContent:'space-between',marginBottom:8}},React.createElement('span',{style:{fontWeight:600,fontSize:13}},'AI Analysis'),React.createElement('button',{className:'bg sm',onClick:()=>setShowAi(false)},'\u2715 Close')),
+        React.createElement(Fmt,{text:aiResult}))));
 }
 
 // ── Dictionary ──
@@ -232,10 +252,10 @@ function App(){
       React.createElement('div',null,React.createElement('div',{style:{fontWeight:700,fontSize:14}},'ABAP AI Studio'),React.createElement('div',{style:{fontSize:11,color:'var(--fg3)'}},'DEV 192.168.144.174 \u00b7 Client 210 \u00b7 S4D')),
       React.createElement('div',{style:{marginLeft:'auto',display:'flex',alignItems:'center',gap:10}},sapOk?React.createElement('span',{className:'badge b-green'},'\u25CF SAP Connected \u2014 S4D'):React.createElement('span',{className:'badge b-amber'},'\u25CB SAP Connecting...'),React.createElement('span',{style:{fontSize:13,fontWeight:600}},user.display_name||user.username),React.createElement('button',{className:'bg sm',onClick:logout},'Logout'))),
     React.createElement('div',{className:'main'},
-      React.createElement('div',{className:'sidebar'},tabs.map(t=>React.createElement('button',{key:t.id,className:`si ${tab===t.id?'a':''}`,onClick:()=>setTab(t.id)},React.createElement('span',{style:{fontSize:15,width:18,textAlign:'center'}},t.i),t.l)),React.createElement('div',{style:{flex:1}}),React.createElement('div',{style:{padding:'6px 10px',fontSize:10,color:'var(--fg4)',borderTop:'1px solid var(--border)'}},`v2.0 \u00b7 Cloud Edition`)),
+      React.createElement('div',{className:'sidebar'},tabs.map(t=>React.createElement('button',{key:t.id,className:`si ${tab===t.id?'a':''}`,onClick:()=>setTab(t.id)},React.createElement('span',{style:{fontSize:15,width:18,textAlign:'center'}},t.i),t.l)),React.createElement('div',{style:{flex:1}}),React.createElement('div',{style:{padding:'6px 10px',fontSize:10,color:'var(--fg4)',borderTop:'1px solid var(--border)'}},`v2.1 \u00b7 Cloud Edition`)),
       React.createElement('div',{className:'content'},
         tab==='chat'&&React.createElement(Chat,{token}),tab==='source'&&React.createElement(Source,{token}),tab==='pipeline'&&React.createElement(Pipeline,{token}),
-        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='gen'&&React.createElement(Gen,{token}))));
+        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token,onViewSource:(name)=>{setTab('source');setTimeout(()=>{const el=document.querySelector('input[placeholder*="Program name"]');if(el){el.value=name;el.dispatchEvent(new Event("input",{bubbles:true}))}},100)}}),tab==='sql'&&React.createElement(Sql,{token}),tab==='gen'&&React.createElement(Gen,{token}))));
 }
 ReactDOM.render(React.createElement(App),document.getElementById('root'));
 </script>
