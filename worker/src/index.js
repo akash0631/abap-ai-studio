@@ -215,7 +215,7 @@ export default {
           const fixResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
             headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
             body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,
-              system:KB+'\nYou are the FIXER agent. You receive code + review findings. Fix EVERY issue found. You MUST output the COMPLETE corrected code from start to end - never truncate or say 'rest remains the same'. Output ALL lines in ```abap blocks. Explain each fix.',
+              system:KB+'\nYou are the FIXER agent. You receive code + review findings. Fix EVERY issue found. You MUST output the COMPLETE corrected code from start to end - never truncate or abbreviate any part. Output ALL lines in ```abap blocks. Explain each fix.',
               messages:[{role:'user',content:'Original code:\n'+generatedCode+'\n\nReview findings:\n'+review+'\n\nFix ALL issues and provide complete corrected code.'}]})});
           const fixData=await fixResp.json();
           fixedCode=(fixData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
