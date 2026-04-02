@@ -114,7 +114,7 @@ function Login({onLogin}){
 function Chat({token}){
   const[msgs,setMsgs]=useState([]);const[inp,setInp]=useState('');const[loading,setLoading]=useState(false);const[ctx,setCtx]=useState('');const ref=useRef(null);
   useEffect(()=>{ref.current?.scrollIntoView({behavior:'smooth'})},[msgs]);
-  async function send(t){const m=t||inp.trim();if(!m)return;setInp('');const n=[...msgs,{r:'user',c:m}];setMsgs(n);setLoading(true);try{const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:8192,system:SYS+(ctx?' Context: '+ctx:''),messages:n.map(x=>({role:x.r==='user'?'user':'assistant',content:x.c}))},token);const reply=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')||'No response.';setMsgs([...n,{r:'ai',c:reply}])}catch(x){setMsgs([...n,{r:'ai',c:'Error: '+x.message}])}setLoading(false)}
+  async function send(t){const m=t||inp.trim();if(!m)return;setInp('');const n=[...msgs,{r:'user',c:m}];setMsgs(n);setLoading(true);try{const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:4096,system:SYS+(ctx?' Context: '+ctx:''),messages:n.map(x=>({role:x.r==='user'?'user':'assistant',content:x.c}))},token);const reply=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')||'No response.';setMsgs([...n,{r:'ai',c:reply}])}catch(x){setMsgs([...n,{r:'ai',c:'Error: '+x.message}])}setLoading(false)}
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
     React.createElement('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--border)'}},React.createElement('input',{value:ctx,onChange:e=>setCtx(e.target.value),placeholder:'Context: e.g. MM module, purchase orders, gate entry...',style:{width:'100%'}})),
     React.createElement('div',{className:'chat-messages'},
@@ -130,7 +130,7 @@ function Chat({token}){
 function Source({token}){
   const[prog,setProg]=useState('');const[src,setSrc]=useState('');const[info,setInfo]=useState('');const[aiRes,setAiRes]=useState('');const[show,setShow]=useState(false);const[loading,setLoading]=useState(false);
   async function load(){if(!prog.trim())return;setLoading(true);setSrc('');setInfo('');setAiRes('');setShow(false);try{const d=await api('/sap/source',{program:prog.trim().toUpperCase()},token);setSrc(d.source);setInfo(`${d.program} \u2014 ${d.lines} lines`)}catch(x){setInfo('Error: '+x.message)}setLoading(false)}
-  async function aiAction(type){if(!src)return;setShow(true);setAiRes('Analyzing...');const p=type==='opt'?`Optimize this ABAP. Show before/after comparison:\n\`\`\`abap\n${src}\n\`\`\`\nList every change with explanation.`:`Full code review of this ABAP program. Rate /10. Check: quality, error handling, security, performance, S/4HANA compatibility, naming conventions.\n\`\`\`abap\n${src}\n\`\`\``;try{const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:8192,system:SYS,messages:[{role:'user',content:p}]},token);setAiRes((d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'))}catch(x){setAiRes('Error: '+x.message)}}
+  async function aiAction(type){if(!src)return;setShow(true);setAiRes('Analyzing...');const p=type==='opt'?`Optimize this ABAP. Show before/after comparison:\n\`\`\`abap\n${src.substring(0,4000)}\n\`\`\`\nList every change with explanation.`:`Full code review of this ABAP program. Rate /10. Check: quality, error handling, security, performance, S/4HANA compatibility, naming conventions.\n\`\`\`abap\n${src.substring(0,4000)}\n\`\`\``;try{const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:4096,system:SYS,messages:[{role:'user',content:p}]},token);setAiRes((d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'))}catch(x){setAiRes('Error: '+x.message)}}
   function renderSrc(){return src.split('\n').map((line,i)=>{let h=line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\b(DATA|FIELD-SYMBOLS|TYPES|CONSTANTS|CLASS|METHOD|ENDMETHOD|ENDCLASS|FORM|ENDFORM|FUNCTION|ENDFUNCTION|IF|ELSE|ELSEIF|ENDIF|LOOP|ENDLOOP|SELECT|FROM|INTO|WHERE|AND|OR|TRY|CATCH|ENDTRY|WRITE|MESSAGE|CALL|PERFORM|APPEND|READ|DELETE|MODIFY|INSERT|REPORT|PROGRAM|INCLUDE|TYPE|REF|TABLE|LIKE|VALUE|IMPORTING|EXPORTING|CHANGING|RAISING|BEGIN|END|STRUCTURE)\b/g,'<span class="kw">$1</span>').replace(/(\"[^\n]*)/g,'<span class="cm">$1</span>').replace(/('[^']*')/g,'<span class="str">$1</span>');return React.createElement('div',{key:i,className:'src-line'},React.createElement('span',{className:'ln'},String(i+1).padStart(4,' ')),React.createElement('span',{dangerouslySetInnerHTML:{__html:h}}))})}
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
     React.createElement('div',{className:'toolbar'},React.createElement('input',{value:prog,onChange:e=>setProg(e.target.value),placeholder:'Program name e.g. ZGATE_ENTRY_5_CHANGE_NEW',style:{flex:1,minWidth:250},onKeyDown:e=>e.key==='Enter'&&load()}),React.createElement('button',{className:'bp',onClick:load,disabled:loading},loading?'Loading...':'Load Source'),src&&React.createElement('button',{className:'bs',onClick:()=>aiAction('opt')},'\u2728 Optimize'),src&&React.createElement('button',{className:'bs',onClick:()=>aiAction('rev')},'\uD83D\uDD0D Review'),src&&React.createElement('button',{className:'bg sm',onClick:()=>navigator.clipboard?.writeText(src)},'Copy')),
@@ -142,18 +142,18 @@ function Source({token}){
 
 // ── Repository with action buttons ──
 function Repo({token}){
-  const[type,setType]=useState('PROG');const[search,setSearch]=useState('');const[results,setResults]=useState([]);const[loading,setLoading]=useState(false);const[smartResult,setSmartResult]=useState(null);const[aiResult,setAiResult]=useState('');const[showAi,setShowAi]=useState(false);
-async function go(){if(!search.trim())return;setLoading(true);setSmartResult(null);
-    try{var d=await api('/repo/search',{term:search},token);setSmartResult(d);
-      if(d.type==='program')setResults(d.results||[]);
-      else if(d.type==='function_modules_list')setResults((d.results||[]).map(function(r){return{NAME:r.name,CNAM:r.program}}));
-      else setResults([]);
-    }catch(x){setResults([])}setLoading(false)}
+  const[type,setType]=useState('PROG');const[search,setSearch]=useState('');const[results,setResults]=useState([]);const[loading,setLoading]=useState(false);const[aiResult,setAiResult]=useState('');const[showAi,setShowAi]=useState(false);
+  async function go(){if(!search.trim())return;setLoading(true);const n=search.toUpperCase();let q='';
+    if(type==='PROG')q="SELECT TOP 50 NAME,CNAM,UDAT FROM TRDIR WHERE NAME LIKE '"+n+"%'";
+    else if(type==='FUGR')q="SELECT TOP 50 FUNCNAME,AREA,PTEXT FROM TFDIR WHERE FUNCNAME LIKE '"+n+"%'";
+    else if(type==='CLAS')q="SELECT TOP 50 CLSNAME,DESCRIPT FROM SEOCLASS WHERE CLSNAME LIKE '"+n+"%'";
+    else q="SELECT TOP 50 OBJ_NAME,OBJECT,DEVCLASS FROM TADIR WHERE OBJ_NAME LIKE '"+n+"%'";
+    try{const d=await api('/sap/query',{sql:q},token);setResults(d.rows||[])}catch(x){setResults([])}setLoading(false)}
   async function aiAction(name,act){setShowAi(true);setAiResult('Loading source...');try{
     const src=await api('/sap/source',{program:name},token);if(src.error){setAiResult('Error: '+src.error);return}
     var prompt=act==='review'?'Code review '+name+'. Rate /10. Check quality, errors, security, performance, S4HANA compat.':'Optimize '+name+'. Show every improvement with modern ABAP 7.4+.';
-    prompt+='\n\n```abap\n'+(src.source||'')+'\n```';
-    const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:8192,system:SYS,messages:[{role:'user',content:prompt}]},token);
+    prompt+='\n\n```abap\n'+(src.source||'').substring(0,4000)+'\n```';
+    const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:4096,system:SYS,messages:[{role:'user',content:prompt}]},token);
     setAiResult((d.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n'))}catch(x){setAiResult('Error: '+x.message)}}
   var cleaned=cleanRows(results,type==='FUGR'?'func':'repo');var cols=cleaned.cols;var data=cleaned.data;
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
@@ -163,27 +163,7 @@ async function go(){if(!search.trim())return;setLoading(true);setSmartResult(nul
       React.createElement('button',{className:'bp',onClick:go,disabled:loading},loading?'Searching...':'Search')),
     React.createElement('div',{style:{display:'flex',gap:12,flex:1,overflow:'hidden'}},
       React.createElement('div',{style:{flex:showAi?1:undefined,width:showAi?undefined:'100%',overflow:'auto'}},
-        smartResult&&(smartResult.type==='function_module'||smartResult.type==='function_group')?React.createElement('div',{className:'card',style:{marginBottom:12}},
-        React.createElement('div',{style:{display:'flex',gap:8,alignItems:'center',marginBottom:8}},
-          React.createElement('span',{className:'badge b-blue'},smartResult.type==='function_module'?'Function Module':'Function Group'),
-          React.createElement('span',{style:{fontWeight:700,fontSize:15}},smartResult.function_module||smartResult.function_group),
-          smartResult.function_group?React.createElement('span',{style:{color:'var(--fg3)',fontSize:13}},'Function Group: '+smartResult.function_group):null,
-          smartResult.main_program?React.createElement('span',{style:{color:'var(--fg4)',fontSize:12}},'Main: '+smartResult.main_program):null),
-        React.createElement('div',{style:{display:'flex',gap:20}},
-          React.createElement('div',{style:{flex:1}},
-            React.createElement('div',{style:{fontWeight:600,fontSize:13,marginBottom:6,color:'var(--blue)'}},'Function Modules ('+(smartResult.all_function_modules||[]).length+')'),
-            (smartResult.all_function_modules||[]).map(function(fm,i){return React.createElement('div',{key:i,style:{display:'flex',gap:8,padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:12}},
-              React.createElement('div',{style:{fontWeight:600,color:'var(--blue)',cursor:'pointer',flex:1},onClick:function(){aiAction(fm.include||fm.name,'review');}},fm.name),
-              React.createElement('button',{className:'bp sm',onClick:function(){aiAction(fm.include||fm.name,'view')}},'View'),
-              React.createElement('button',{className:'bs sm',onClick:function(){aiAction(fm.include||fm.name,'review')}},'Review'),
-              React.createElement('button',{className:'bs sm',onClick:function(){aiAction(fm.include||fm.name,'optimize')}},'Optimize'))})),
-          React.createElement('div',{style:{flex:1}},
-            React.createElement('div',{style:{fontWeight:600,fontSize:13,marginBottom:6,color:'var(--green)'}},'Includes ('+(smartResult.all_includes||[]).length+')'),
-            (smartResult.all_includes||[]).map(function(inc,i){return React.createElement('div',{key:i,style:{display:'flex',gap:8,padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:12}},
-              React.createElement('div',{style:{fontWeight:600,flex:1}},inc.name),
-              React.createElement('div',{style:{color:'var(--fg4)',width:80}},inc.changed||''),
-              React.createElement('button',{className:'bg sm',onClick:function(){aiAction(inc.name,'view')}},'View'))}))))):null,
-      data.length>0?React.createElement('div',null,
+        data.length>0?React.createElement('div',null,
           React.createElement('div',{style:{fontSize:12,color:'var(--fg3)',marginBottom:6}},data.length+' result(s)'),
           React.createElement('table',{className:'dt'},
             React.createElement('thead',null,React.createElement('tr',null,cols.map(function(c){return React.createElement('th',{key:c},c)}),React.createElement('th',null,'Actions'))),
@@ -232,7 +212,7 @@ function Sql({token}){
 // ── Code Generator ──
 function Gen({token}){
   const[tpl,setTpl]=useState('abap_class');const[table,setTable]=useState('');const[desc,setDesc]=useState('');const[result,setResult]=useState('');const[loading,setLoading]=useState(false);
-  async function go(){if(!desc.trim())return;setLoading(true);setResult('');const t=TEMPLATES.find(x=>x.id===tpl);try{const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:8192,system:SYS+'\nGenerate complete, production-ready code with all declarations, error handling, and comments.',messages:[{role:'user',content:`Generate complete ${t.l} for: ${desc}. ${table?'Table: '+table:''}. Modern ABAP 7.4+.`}]},token);setResult((d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'))}catch(x){setResult('Error: '+x.message)}setLoading(false)}
+  async function go(){if(!desc.trim())return;setLoading(true);setResult('');const t=TEMPLATES.find(x=>x.id===tpl);try{const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:4096,system:SYS+'\nGenerate complete, production-ready code with all declarations, error handling, and comments.',messages:[{role:'user',content:`Generate complete ${t.l} for: ${desc}. ${table?'Table: '+table:''}. Modern ABAP 7.4+.`}]},token);setResult((d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'))}catch(x){setResult('Error: '+x.message)}setLoading(false)}
   return React.createElement('div',{style:{display:'flex',gap:16,height:'100%'}},
     React.createElement('div',{style:{width:240,flexShrink:0,display:'flex',flexDirection:'column',gap:10}},
       React.createElement('div',{style:{fontSize:11,fontWeight:700,color:'var(--fg3)',textTransform:'uppercase',letterSpacing:1}},'Template'),
@@ -247,22 +227,7 @@ function Gen({token}){
 function Pipeline({token}){
   const[code,setCode]=useState('');const[action,setAction]=useState('optimize');const[result,setResult]=useState('');const[loading,setLoading]=useState(false);
   const actions={optimize:'Optimize this ABAP code. Show every change. Use modern ABAP 7.4+ syntax, HANA-optimized SQL, proper error handling. Provide the complete optimized version.',review:'Do a complete code review. Rate /10. Check: 1) Code quality 2) Error handling 3) Security (SQL injection, auth) 4) Performance (SELECT in LOOP, missing indexes) 5) S/4HANA compatibility 6) Naming conventions 7) Missing comments. Give specific line numbers.',modernize:'Convert this classic ABAP to modern ABAP 7.4+ syntax. Replace: MOVE→inline, READ TABLE→table expression, old SELECT→new escaped syntax, IF/CASE→COND/SWITCH, loop aggregation→REDUCE, CREATE OBJECT→NEW, string concatenation→string templates. Show complete converted code.',security:'Security audit this ABAP code. Check for: SQL injection via dynamic WHERE, missing authority checks (AUTHORITY-CHECK), hardcoded credentials, buffer overflow risks, open SQL risks, missing input validation, ABAP injection via GENERATE SUBROUTINE POOL. Rate severity of each finding.',unittest:'Generate complete ABAP Unit test class for this code. Include: setup method, test methods for each public method, positive and negative test cases, use cl_abap_unit_assert, mock dependencies where needed.'};
-  async function go(){if(!code.trim())return;setLoading(true);setResult('');
-    var lineCount=code.split('\n').length;
-    try{
-      if(lineCount>=400&&(action==='optimize'||action==='modernize')){
-        setResult('Large code detected ('+lineCount+' lines). Processing section-by-section...');
-        var d=await api('/pipeline/smart-optimize',{code:code,mode:action},token);
-        if(d.mode==='sectioned'){
-          var output='## Review (Full '+d.lines+' lines analyzed)\n\n'+d.review+'\n\n---\n\n## Optimized Code ('+d.sections+' sections)\n\n';
-          (d.optimized_sections||[]).forEach(function(s,i){output+='### Section '+(i+1)+' (Lines '+(s.start+1)+'-'+s.end+')\n\n'+s.optimized+'\n\n'});
-          setResult(output);
-        }else{setResult(d.result||'No output')}
-      }else{
-        var d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:8192,system:SYS,messages:[{role:'user',content:actions[action]+'\n\n```abap\n'+code+'\n```'}]},token);
-        setResult((d.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n'));
-      }
-    }catch(x){setResult('Error: '+x.message)}setLoading(false)}
+  async function go(){if(!code.trim())return;setLoading(true);setResult('');try{const d=await api('/claude',{model:'claude-sonnet-4-20250514',max_tokens:4096,system:SYS,messages:[{role:'user',content:`${actions[action]}\n\n\`\`\`abap\n${code.substring(0,5000)}\n\`\`\``}]},token);setResult((d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'))}catch(x){setResult('Error: '+x.message)}setLoading(false)}
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
     React.createElement('div',{className:'tabs-row'},['optimize','review','modernize','security','unittest'].map(a=>React.createElement('button',{key:a,className:`tab-btn ${action===a?'a':''}`,onClick:()=>setAction(a)},{optimize:'\u2728 Optimize',review:'\uD83D\uDD0D Review',modernize:'\uD83D\uDD04 Modernize',security:'\uD83D\uDD12 Security Audit',unittest:'\uD83E\uDDEA Unit Tests'}[a]))),
     React.createElement('div',{style:{display:'flex',gap:12,flex:1,overflow:'hidden'}},
@@ -307,7 +272,7 @@ function AgentPipeline({token}){
   var tpls=['abap_class','cds_view','amdp','alv_report','badi','function_module','rap_bo'];
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
     React.createElement('div',{className:'card',style:{marginBottom:14}},
-      React.createElement('div',{style:{fontWeight:700,fontSize:15,marginBottom:10}},'Autonomous Agent Pipeline (Coder > Reviewer > Fixer > Cross-Verify)'),
+      React.createElement('div',{style:{fontWeight:700,fontSize:15,marginBottom:10}},'Agent Pipeline (Coder > Reviewer > Fixer > Verify)'),
       React.createElement('div',{style:{display:'flex',gap:8}},
         React.createElement('select',{value:tpl,onChange:function(e){setTpl(e.target.value)},style:{width:150}},tpls.map(function(t){return React.createElement('option',{key:t,value:t},t.replace(/_/g,' '))})),
         React.createElement('input',{value:req,onChange:function(e){setReq(e.target.value)},placeholder:'Describe what you need...',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')runPipeline()}}),
@@ -317,13 +282,14 @@ function AgentPipeline({token}){
         React.createElement('input',{id:'sap_prog',placeholder:'SAP Program e.g. ZGATE_ENTRY_5',style:{width:220},onKeyDown:function(e){if(e.key==='Enter'){var p=document.getElementById('sap_prog').value;if(p)setReq('Load, review and optimize SAP program '+p.toUpperCase()+'. Load its source first.');runPipeline()}}}),
         React.createElement('button',{className:'bs sm',onClick:function(){var p=document.getElementById('sap_prog').value;if(p)setReq('Load, review and optimize existing SAP program: '+p.toUpperCase());runPipeline()},disabled:running},'Load + Review + Optimize'))),
     running?React.createElement('div',{className:'card',style:{textAlign:'center',padding:30}},
-      React.createElement('div',{style:{display:'flex',justifyContent:'center',gap:30,marginBottom:16}},['1 Coder','2 Reviewer','3 Fixer','4 Verify'].map(function(s){return React.createElement('div',{key:s,style:{width:56,height:56,borderRadius:'50%',background:'var(--blue-bg)',color:'var(--blue-t)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14}},s)})),
-      React.createElement('div',{style:{color:'var(--blue)',fontWeight:500}},'4 AI agents: generating, reviewing, fixing, and cross-verifying your code...')):null,
+      React.createElement('div',{style:{display:'flex',justifyContent:'center',gap:30,marginBottom:16}},['1 Coder','2 Review','3 Fix','4 Verify'].map(function(s){return React.createElement('div',{key:s,style:{width:56,height:56,borderRadius:'50%',background:'var(--blue-bg)',color:'var(--blue-t)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14}},s)})),
+      React.createElement('div',{style:{color:'var(--blue)',fontWeight:500}},'3 AI agents are generating, reviewing, and fixing your code...')):null,
     result&&!result.error?React.createElement('div',{style:{flex:1,overflow:'auto'}},
       React.createElement('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
         React.createElement('span',{className:'badge b-'+(result.stages?.reviewer?.passed?'green':'amber')},result.stages?.reviewer?.passed?'PASSED':'FIXED'),
         React.createElement('span',{className:'badge b-blue'},'Rating: '+(result.rating_initial||'?')+'/10'),
         React.createElement('span',{className:'badge b-blue'},result.iterations+' iteration(s)'),
+        result.cross_rating?React.createElement('span',{className:'badge b-'+(result.cross_rating>=8?'green':'amber')},'Verify: '+result.cross_rating+'/10'):null,
         React.createElement('button',{className:'bs sm',onClick:function(){navigator.clipboard?.writeText(result.final_code||'')}},'Copy Final Code')),
       React.createElement('div',{style:{fontWeight:600,marginBottom:6}},'Final Approved Code:'),
       React.createElement(Fmt,{text:result.final_code||''}),
@@ -333,7 +299,8 @@ function AgentPipeline({token}){
           React.createElement('h4',{style:{color:'var(--blue)',marginBottom:4}},'Stage 1: Coder Agent'),React.createElement(Fmt,{text:result.stages?.coder?.code||''}),
           React.createElement('h4',{style:{color:'var(--amber)',marginTop:12,marginBottom:4}},'Stage 2: Reviewer ('+result.rating_initial+'/10)'),React.createElement(Fmt,{text:result.stages?.reviewer?.review||''}),
           result.stages?.cross_review?React.createElement('div',null,
-            React.createElement('h4',{style:{color:'var(--purple)',marginTop:12,marginBottom:4}},'Stage 4: Cross-Review (Correctness: '+(result.cross_rating||'?')+'/10)'),React.createElement(Fmt,{text:result.stages?.cross_review?.review||''})):null,
+            React.createElement('h4',{style:{color:'var(--purple)',marginTop:12,marginBottom:4}},'Cross-Review (Correctness: '+(result.cross_rating||'?')+'/10)'),
+            React.createElement(Fmt,{text:result.stages.cross_review.review||''})):null,
           result.stages?.fixer?React.createElement('div',null,
             React.createElement('h4',{style:{color:'var(--green)',marginTop:12,marginBottom:4}},'Stage 3: Fixer'),React.createElement(Fmt,{text:result.stages?.fixer?.fixedCode||''}),
             React.createElement('h4',{style:{color:'var(--green)',marginTop:12,marginBottom:4}},'Stage 4: Re-Review'),React.createElement(Fmt,{text:result.stages?.fixer?.fixReview||''})):null))):null,
