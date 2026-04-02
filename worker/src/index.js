@@ -350,7 +350,7 @@ export default {
         const coderResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,
-            system:KB+'\nYou are the CODER agent. Generate COMPLETE production-ready ABAP code. Include ALL declarations, ALL error handling, ALL comments. NEVER truncate or abbreviate. Output the ENTIRE program from FUNCTION/REPORT to ENDFUNCTION/end. Format in ```abap blocks.',
+            system:KB+'\nYou are the CODER agent. RULES: 1) Match requirement EXACTLY - no extra parameters/exceptions not asked for 2) NO over-engineering - if spec says plain text password, use plain text, no hashing/salting 3) NO calling non-existent FMs (no custom logging) 4) NO unauthorized AUTHORITY-CHECK objects 5) ALPHA=IN for number padding, TO_UPPER for case - DIFFERENT operations 6) LFA1-LOEVM compare with X not abap_true 7) Modern ABAP 7.4+ syntax 8) HANA optimized SELECT specific fields 9) TRY...CATCH cx_root 10) Output COMPLETE code FUNCTION to ENDFUNCTION in ```abap blocks - never truncate.',
             messages:[{role:'user',content:'Generate '+template+' for: '+requirement}]})});
         const coderData=await coderResp.json();
         const generatedCode=(coderData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -359,7 +359,21 @@ export default {
         const reviewResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-            system:'You are the REVIEWER agent. You CRITICALLY review ABAP code. Rate /10. Find EVERY issue: naming, error handling, security (SQL injection, auth checks), performance (SELECT in LOOP), S/4HANA compatibility, missing comments. Be harsh but fair. Output format: RATING: X/10 then ISSUES: then VERDICT: PASS or FAIL',
+            system:'You are the REVIEWER agent checking ABAP code quality.
+
+Rate /10. Check THESE specific things:
+1. Does the code match the stated requirement? (no extra parameters/exceptions)
+2. Does it call any non-existent function modules? (flag immediately)
+3. ALPHA = IN vs TO_UPPER — are they used correctly? (ALPHA adds zeros, TO_UPPER changes case)
+4. SELECT * usage (should be specific fields)
+5. Missing RETURN after error checks
+6. Proper TRY...CATCH
+7. HANA performance (no SELECT in LOOP, no LTRIM in JOINs)
+8. Naming conventions (LV_, LT_, LS_ prefixes)
+9. Over-engineering: hash/salt/crypto when spec says plain text? Unauthorized auth objects?
+10. Interface compliance: extra parameters not in the requirement?
+
+Output format: RATING: X/10 then ISSUES: numbered list then VERDICT: PASS or FAIL',
             messages:[{role:'user',content:'Review this ABAP code:\n'+generatedCode}]})});
         const reviewData=await reviewResp.json();
         const review=(reviewData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -376,7 +390,7 @@ export default {
           const fixResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
             headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
             body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,
-              system:KB+'\nYou are the FIXER agent. You receive code + review findings. Fix EVERY issue found. You MUST output the COMPLETE corrected code from start to end - never truncate or abbreviate any part. Output ALL lines in ```abap blocks. Explain each fix.',
+              system:KB+'\nYou are the FIXER agent. Fix ONLY issues from the review - do NOT add features, parameters, exceptions, or FM calls not in the original requirement. Do NOT replace simple logic with crypto/hashing unless asked. Do NOT add non-existent AUTHORITY-CHECK objects or logging FMs. ALPHA=IN is for leading zeros, TO_UPPER for case conversion - never confuse them. Keep the SAME interface. Output COMPLETE corrected code in ```abap blocks - never truncate.',
               messages:[{role:'user',content:'Original code:\n'+generatedCode+'\n\nReview findings:\n'+review+'\n\nFix ALL issues and provide complete corrected code.'}]})});
           const fixData=await fixResp.json();
           fixedCode=(fixData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -401,7 +415,21 @@ export default {
         const crossResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-            system:'You are an INDEPENDENT cross-reviewer. Compare original requirement with the final code. Check for: 1) Functional correctness 2) Changed JOIN conditions that alter results 3) Removed business logic 4) Changed WHERE conditions 5) Interface changes 6) ALPHA vs UPPER CASE misuse 7) Missing RETURN statements. Rate correctness /10. List ANY functional issues found. Be brief and precise.',
+            system:'You are an INDEPENDENT cross-reviewer verifying ABAP code against the original requirement.
+
+Check for these SPECIFIC issues (learned from past mistakes):
+1. INTERFACE VIOLATION: Did the code add parameters or exceptions NOT in the requirement?
+2. OVER-ENGINEERING: Hash/salt/crypto added when spec says plain text? Unnecessary auth objects?
+3. PHANTOM DEPENDENCIES: Does it call function modules that don't exist? (ZSRM_LOG_*, custom logging)
+4. ALPHA vs UPPER CASE: ALPHA = IN adds leading zeros (for LIFNR/MATNR). TO_UPPER changes case. These are DIFFERENT — is the right one used?
+5. JOIN CONDITIONS: Were LTRIM joins changed to = or vice versa? This alters query results
+6. MISSING RETURNS: Every error check must have RETURN after setting error response
+7. LFA1-LOEVM: This is CHAR1 — must compare with 'X', not abap_true
+8. BUSINESS LOGIC: Was any active (non-commented) logic removed or changed?
+9. READ-ONLY: If spec says read-only, are there any INSERT/UPDATE/DELETE/MODIFY statements?
+10. COMPLETENESS: Is the code complete from FUNCTION to ENDFUNCTION? No truncation?
+
+Rate correctness /10. List ANY issues found. Be brief.',
             messages:[{role:'user',content:'Requirement: '+requirement+'\n\nFinal code to verify:\n'+finalCode.substring(0,6000)}]})});
         const crossData=await crossResp.json();
         const crossReview=(crossData.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n');
