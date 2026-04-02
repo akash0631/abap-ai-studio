@@ -333,10 +333,24 @@ export default {
       if(path==='/pipeline/generate-tests'&&request.method==='POST'){
         const body=await request.json();
         if(!body.code)return err('Code required');
-        const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,system:'Generate ABAP Unit test class. Include setup, test methods, cl_abap_unit_assert. Output ONLY ```abap code.',messages:[{role:'user',content:'Generate tests for:\n'+body.code}]})});\n        const d=await r.json();\n        return json({tests:(d.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n')});\n      }\n\n      if(path==='/pipeline'&&request.method==='POST'){\n        const body=await request.json();\n        const requirement=body.requirement;\n        const template=body.template||'abap_class';\n        if(!requirement)return err('Requirement text needed');\n\n        const KB='You are an elite SAP ABAP architect. S4D DEV 192.168.144.174 Client 210. Always modern ABAP 7.4+. HANA-optimized. Production-ready code with full error handling.';\n\n        // Stage 1: Coder Agent\n        const coderResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,system:'Generate ABAP Unit test class. Include setup, test methods, cl_abap_unit_assert. Output ONLY ```abap code.',messages:[{role:'user',content:'Generate tests for:\n'+body.code}]})});
+        const d=await r.json();
+        return json({tests:(d.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n')});
+      }
+
+      if(path==='/pipeline'&&request.method==='POST'){
+        const body=await request.json();
+        const requirement=body.requirement;
+        const template=body.template||'abap_class';
+        if(!requirement)return err('Requirement text needed');
+
+        const KB='You are an elite SAP ABAP architect. S4D DEV 192.168.144.174 Client 210. Always modern ABAP 7.4+. HANA-optimized. Production-ready code with full error handling.';
+
+        // Stage 1: Coder Agent
+        const coderResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,
-            system:KB+'\nYou are the CODER agent. RULES: 1) Match requirement EXACTLY - no extra parameters/exceptions not asked for 2) NO over-engineering - if spec says plain text password, use plain text, no hashing/salting 3) NO calling non-existent FMs (no custom logging) 4) NO unauthorized AUTHORITY-CHECK objects 5) ALPHA=IN for number padding, TO_UPPER for case - DIFFERENT operations 6) LFA1-LOEVM compare with X not abap_true 7) Modern ABAP 7.4+ syntax 8) HANA optimized SELECT specific fields 9) TRY...CATCH cx_root 10) Output COMPLETE code FUNCTION to ENDFUNCTION in ```abap blocks - never truncate.',
+            system:KB+'\nYou are the CODER agent. RULES: Match requirement EXACTLY - no extra params/exceptions. No hashing/crypto unless spec asks. No non-existent FM calls. ALPHA=IN for number padding, TO_UPPER for case. LFA1-LOEVM compare with X. Modern ABAP 7.4+. HANA SELECT specific fields. TRY CATCH cx_root. Output COMPLETE code in ```abap blocks.',
             messages:[{role:'user',content:'Generate '+template+' for: '+requirement}]})});
         const coderData=await coderResp.json();
         const generatedCode=(coderData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -345,7 +359,7 @@ export default {
         const reviewResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-            system:'You are the REVIEWER agent. Rate /10. Check: 1)Interface matches requirement 2)No non-existent FM calls 3)ALPHA vs TO_UPPER used correctly 4)No SELECT * 5)Missing RETURN 6)TRY CATCH 7)No over-engineering (hash/crypto when spec says plain text) 8)No unauthorized params/exceptions 9)Naming conventions. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',
+            system:'You are the REVIEWER agent. Rate /10. Check: interface matches requirement, no non-existent FM calls, ALPHA vs TO_UPPER correct, no SELECT *, missing RETURN, TRY CATCH, no over-engineering (hash/crypto when spec says plain text), no unauthorized params. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',
             messages:[{role:'user',content:'Review this ABAP code:\n'+generatedCode}]})});
         const reviewData=await reviewResp.json();
         const review=(reviewData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -362,7 +376,7 @@ export default {
           const fixResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
             headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
             body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,
-              system:KB+'\nYou are the FIXER agent. Fix ONLY review issues. No extra features/params/exceptions. No crypto unless asked. No non-existent FMs. ALPHA=IN for numbers, TO_UPPER for text. Keep SAME interface. Output COMPLETE code in ```abap blocks.',
+              system:KB+'\nYou are the FIXER agent. Fix ONLY review issues - no extra features/params/exceptions not in requirement. No crypto unless asked. No non-existent FMs. ALPHA=IN for numbers, TO_UPPER for text. Keep SAME interface. Output COMPLETE corrected code in ```abap blocks.',
               messages:[{role:'user',content:'Original code:\n'+generatedCode+'\n\nReview findings:\n'+review+'\n\nFix ALL issues and provide complete corrected code.'}]})});
           const fixData=await fixResp.json();
           fixedCode=(fixData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -371,7 +385,7 @@ export default {
           const reReviewResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
             headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
             body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-              system:'You are the REVIEWER agent. Rate /10. Check: 1)Interface matches requirement 2)No non-existent FM calls 3)ALPHA vs TO_UPPER used correctly 4)No SELECT * 5)Missing RETURN 6)TRY CATCH 7)No over-engineering (hash/crypto when spec says plain text) 8)No unauthorized params/exceptions 9)Naming conventions. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',
+              system:'You are the REVIEWER agent. Rate this fixed ABAP code /10. Brief verdict only. Format: RATING: X/10 VERDICT: PASS or FAIL',
               messages:[{role:'user',content:'Review this fixed code:\n'+fixedCode}]})});
           const reReviewData=await reReviewResp.json();
           fixReview=(reReviewData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -387,7 +401,7 @@ export default {
         const crossResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-            system:'You are an INDEPENDENT cross-reviewer verifying ABAP code against the original requirement.\n\nCheck for these SPECIFIC issues (learned from past mistakes):\n1. INTERFACE VIOLATION: Did the code add parameters or exceptions NOT in the requirement?\n2. OVER-ENGINEERING: Hash/salt/crypto added when spec says plain text? Unnecessary auth objects?\n3. PHANTOM DEPENDENCIES: Does it call function modules that don't exist? (ZSRM_LOG_*, custom logging)\n4. ALPHA vs UPPER CASE: ALPHA = IN adds leading zeros (for LIFNR/MATNR). TO_UPPER changes case. These are DIFFERENT — is the right one used?\n5. JOIN CONDITIONS: Were LTRIM joins changed to = or vice versa? This alters query results\n6. MISSING RETURNS: Every error check must have RETURN after setting error response\n7. LFA1-LOEVM: This is CHAR1 — must compare with 'X', not abap_true\n8. BUSINESS LOGIC: Was any active (non-commented) logic removed or changed?\n9. READ-ONLY: If spec says read-only, are there any INSERT/UPDATE/DELETE/MODIFY statements?\n10. COMPLETENESS: Is the code complete from FUNCTION to ENDFUNCTION? No truncation?\n\nRate correctness /10. List ANY issues found. Be brief.',
+            system:'You are an INDEPENDENT cross-reviewer checking for over-engineering and spec violations. Check for: 1) Functional correctness 2) Changed JOIN conditions that alter results 3) Removed business logic 4) Changed WHERE conditions 5) Interface changes 6) ALPHA vs UPPER CASE misuse 7) Missing RETURN statements. Rate correctness /10. List ANY functional issues found. Be brief and precise.',
             messages:[{role:'user',content:'Requirement: '+requirement+'\n\nFinal code to verify:\n'+finalCode.substring(0,6000)}]})});
         const crossData=await crossResp.json();
         const crossReview=(crossData.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n');
