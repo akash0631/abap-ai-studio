@@ -125,20 +125,26 @@ export default {
           result.detected='function_module';
           result.info={funcname:fm.FUNCNAME,pname:fm.PNAME,include:fm.INCLUDE};
           // The include is the program that has the FM source
-          var includeProg=fm.INCLUDE||fm.PNAME;
-          if(!includeProg&&fm.PNAME){
-            // Construct include name: PNAME is like SAPLZWM_RFC, include is L + funcgroup + U + number
-            includeProg=fm.PNAME;
-          }
+          // Construct proper include name: PNAME=SAPLZSRM_VENDOR, INCLUDE=02 → LZSRM_VENDORU02
+          var fgName2=fm.PNAME?(fm.PNAME.replace('SAPL','')):'';
+          var includeNum=fm.INCLUDE||'01';
+          // Pad include number to 2 digits
+          if(includeNum.length===1)includeNum='0'+includeNum;
+          var includeProg='L'+fgName2+'U'+includeNum;
           var srcData=await getSrc(includeProg);
           if(srcData.source){
             result.source=srcData.source;
             result.program=includeProg;
             result.lines=srcData.lines||srcData.source.split('\n').length;
           }else{
-            // Try the PNAME directly
+            // Fallback: try PNAME directly
             srcData=await getSrc(fm.PNAME);
             if(srcData.source){result.source=srcData.source;result.program=fm.PNAME;result.lines=srcData.lines||0;}
+            else{
+              // Try without padding
+              srcData=await getSrc('L'+fgName2+'U'+fm.INCLUDE);
+              if(srcData.source){result.source=srcData.source;result.program='L'+fgName2+'U'+fm.INCLUDE;result.lines=srcData.lines||0;}
+            }
           }
           // Also get all FMs in the same function group
           var fgName=fm.PNAME?fm.PNAME.replace('SAPL',''):name;
