@@ -226,67 +226,84 @@ function Gen({token}){
 }
 
 
-// ── SAP Diagnostics ──
+// ── SAP Diagnostics — Chat Interface ──
 function Diagnostics({token}){
-  const[mode,setMode]=useState('hu');
-  const[query,setQuery]=useState('');
+  const[msgs,setMsgs]=useState([]);
+  const[input,setInput]=useState('');
   const[loading,setLoading]=useState(false);
-  const[result,setResult]=useState(null);
+  const chatEnd=React.useRef(null);
+  
+  React.useEffect(function(){if(chatEnd.current)chatEnd.current.scrollIntoView({behavior:'smooth'})},[msgs]);
   
   async function investigate(){
-    if(!query.trim())return;
-    setLoading(true);setResult(null);
+    if(!input.trim()||loading)return;
+    var userMsg=input.trim();
+    setInput('');
+    setMsgs(function(prev){return prev.concat([{role:'user',text:userMsg}])});
+    setLoading(true);
+    
     try{
-      var d=await api('/diagnostics',{mode:mode,query:query,system:'dev'},token);
-      setResult(d);
-    }catch(x){setResult({error:x.message})}
+      // Step 1: Show thinking
+      setMsgs(function(prev){return prev.concat([{role:'status',text:'Querying SAP tables for relevant data...'}])});
+      
+      // Call diagnostics endpoint — it queries SAP + AI analyzes
+      var d=await api('/diagnostics',{mode:'error',query:userMsg,system:'dev'},token);
+      
+      // Remove status message and add results
+      setMsgs(function(prev){
+        var filtered=prev.filter(function(m){return m.role!=='status'});
+        
+        // Add data summary
+        var dataSummary='';
+        if(d.results){
+          for(var tbl in d.results){
+            var rows=(d.results[tbl].rows||[]);
+            if(rows.length>0)dataSummary+='\n📊 '+tbl.toUpperCase()+': '+rows.length+' rows found';
+          }
+        }
+        if(dataSummary)filtered.push({role:'data',text:'SAP Data Retrieved:'+dataSummary});
+        
+        // Add AI analysis
+        if(d.analysis)filtered.push({role:'assistant',text:d.analysis});
+        else filtered.push({role:'assistant',text:'No relevant data found. Try being more specific — include delivery numbers, HU barcodes, error messages, or transaction codes.'});
+        
+        return filtered;
+      });
+    }catch(x){
+      setMsgs(function(prev){return prev.filter(function(m){return m.role!=='status'}).concat([{role:'assistant',text:'Error: '+x.message}])});
+    }
     setLoading(false);
   }
   
-  return React.createElement('div',{style:{padding:16}},
-    React.createElement('div',{style:{fontWeight:700,fontSize:16,marginBottom:12}},'🔍 SAP Diagnostics'),
-    React.createElement('div',{style:{display:'flex',gap:8,marginBottom:12,alignItems:'center'}},
-      React.createElement('select',{value:mode,onChange:function(e){setMode(e.target.value)},style:{padding:8,borderRadius:6,border:'1px solid var(--border)',fontSize:13}},
-        React.createElement('option',{value:'hu'},'HU / Delivery Investigation'),
-        React.createElement('option',{value:'error'},'Error Analysis'),
-        React.createElement('option',{value:'dumps'},'Short Dumps (ST22)'),
-        React.createElement('option',{value:'applogs'},'Application Logs (SLG1)')),
-      React.createElement('input',{value:query,onChange:function(e){setQuery(e.target.value)},
-        placeholder:mode==='hu'?'Enter HU number, delivery, or shipment...':mode==='dumps'?'Start date (YYYYMMDD)':mode==='applogs'?'Start date (YYYYMMDD)':'Describe the error...',
-        style:{flex:1,padding:8,borderRadius:6,border:'1px solid var(--border)',fontSize:13},
-        onKeyDown:function(e){if(e.key==='Enter')investigate()}}),
-      React.createElement('button',{className:'bg',onClick:investigate,disabled:loading},loading?'Analyzing...':'Investigate')),
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%',padding:0}},
+    // Chat messages
+    React.createElement('div',{style:{flex:1,overflow:'auto',padding:16}},
+      msgs.length===0?React.createElement('div',{style:{textAlign:'center',padding:60,color:'var(--fg4)'}},
+        React.createElement('div',{style:{fontSize:28,marginBottom:8}},'\uD83D\uDD0D'),
+        React.createElement('div',{style:{fontWeight:700,fontSize:16,marginBottom:8,color:'var(--fg)'}},'SAP Diagnostics'),
+        React.createElement('div',{style:{fontSize:13,color:'var(--fg3)',maxWidth:500,margin:'0 auto',lineHeight:1.6}},'Describe your problem in plain language. I\'ll query SAP tables, read source code, check error logs, and give you a root cause analysis with a fix plan.'),
+        React.createElement('div',{style:{display:'flex',flexWrap:'wrap',gap:6,justifyContent:'center',marginTop:16}},
+          ['Trucks stuck at warehouse — HUs not adding to dispatch','Short dumps happening in ZWM_CREATE_HU_AND_ASSIGN','Delivery 800001234 not picking — check status','Show recent ST22 dumps from today','Why is ZSDC_DIRECT_ART_VAL failing for store 1005'].map(function(ex,i){
+            return React.createElement('button',{key:i,onClick:function(){setInput(ex)},style:{fontSize:11,padding:'6px 12px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg)',cursor:'pointer',color:'var(--fg3)'}},ex)}))):
+      msgs.map(function(m,i){
+        if(m.role==='user')return React.createElement('div',{key:i,style:{display:'flex',justifyContent:'flex-end',marginBottom:12}},
+          React.createElement('div',{style:{background:'var(--blue)',color:'#fff',padding:'8px 14px',borderRadius:'12px 12px 2px 12px',maxWidth:'70%',fontSize:13}},m.text));
+        if(m.role==='status')return React.createElement('div',{key:i,style:{marginBottom:8,color:'var(--fg4)',fontSize:12,fontStyle:'italic'}},'\u23F3 '+m.text);
+        if(m.role==='data')return React.createElement('div',{key:i,style:{marginBottom:8,padding:'8px 12px',background:'var(--bg2)',borderRadius:8,border:'1px solid var(--border)',fontSize:11,fontFamily:'var(--mono)',whiteSpace:'pre-wrap',color:'var(--fg3)'}},m.text);
+        return React.createElement('div',{key:i,style:{marginBottom:12}},
+          React.createElement('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',padding:'12px 16px',borderRadius:'12px 12px 12px 2px',maxWidth:'85%',fontSize:13}},
+            React.createElement(Fmt,{text:m.text})));
+      }),
+      loading?React.createElement('div',{style:{color:'var(--fg4)',fontSize:12,padding:8}},'\u23F3 Analyzing SAP logs, source code, and error data...'):null,
+      React.createElement('div',{ref:chatEnd})),
     
-    mode==='hu'?React.createElement('div',{style:{fontSize:11,color:'var(--fg4)',marginBottom:10}},'Example: Enter delivery number (e.g. 8000012345) or HU barcode to trace its full lifecycle through VEKP, VEPO, LIKP, VTTK'):null,
-    
-    loading?React.createElement('div',{style:{textAlign:'center',padding:40,color:'var(--fg3)'}},'Querying SAP tables + AI analysis... (10-15s)'):null,
-    
-    result&&!result.error?React.createElement('div',null,
-      // AI Analysis
-      result.analysis?React.createElement('div',{className:'card',style:{marginBottom:12,borderLeft:'3px solid var(--blue)'}},
-        React.createElement('div',{style:{fontWeight:700,fontSize:14,marginBottom:8,color:'var(--blue)'}},'🧠 AI Root Cause Analysis'),
-        React.createElement(Fmt,{text:result.analysis})):null,
-      
-      // Raw data tables
-      React.createElement('div',{style:{fontWeight:600,fontSize:13,marginBottom:8,marginTop:16}},'Raw SAP Data'),
-      Object.keys(result.results||{}).map(function(tbl){
-        var data=result.results[tbl];
-        if(!data.rows||data.rows.length===0)return null;
-        var cols=Object.keys(data.rows[0]);
-        return React.createElement('div',{key:tbl,className:'card',style:{marginBottom:8,padding:0,overflow:'auto'}},
-          React.createElement('div',{style:{padding:'8px 12px',fontWeight:600,fontSize:12,background:'var(--bg2)',borderBottom:'1px solid var(--border)'}},tbl.toUpperCase()+' ('+data.rows.length+' rows)'),
-          React.createElement('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:11,fontFamily:'monospace'}},
-            React.createElement('thead',null,
-              React.createElement('tr',null,cols.map(function(c){return React.createElement('th',{key:c,style:{textAlign:'left',padding:'4px 8px',borderBottom:'1px solid var(--border)',color:'var(--fg3)',fontSize:10}},c)}))),
-            React.createElement('tbody',null,
-              data.rows.slice(0,20).map(function(row,i){return React.createElement('tr',{key:i,style:{borderBottom:'1px solid var(--border-light)'}},
-                cols.map(function(c){return React.createElement('td',{key:c,style:{padding:'3px 8px',fontSize:10}},String(row[c]||'').substring(0,30))}))}))))
-      })
-    ):null,
-    
-    result&&result.error?React.createElement('div',{style:{color:'red',padding:20}},'Error: '+result.error):null
+    // Input bar
+    React.createElement('div',{style:{borderTop:'1px solid var(--border)',padding:'10px 16px',display:'flex',gap:8,background:'var(--bg)'}},
+      React.createElement('input',{value:input,onChange:function(e){setInput(e.target.value)},onKeyDown:function(e){if(e.key==='Enter')investigate()},placeholder:'Describe the problem... (e.g. HUs stuck, short dumps, delivery errors)',style:{flex:1,padding:'10px 14px',borderRadius:8,border:'1px solid var(--border)',fontSize:13,background:'var(--bg2)'}}),
+      React.createElement('button',{className:'bg',onClick:investigate,disabled:loading,style:{padding:'10px 20px'}},loading?'Analyzing...':'Investigate'))
   );
 }
+
 
 // ── AI Code Pipeline (NEW) ──
 function Pipeline({token}){
@@ -454,7 +471,7 @@ function App(){
   useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);
   function logout(){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null)}
   if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});
-  const tabs=[{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'agents',l:'Agent Pipeline',i:'\uD83D\uDE80'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'pipeline',l:'Code Tools',i:'\u2728'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'gen',l:'Code Generator',i:'\u26A1'}];if(user.role==='admin')tabs.push({id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
+  const tabs=[{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'agents',l:'Agent Pipeline',i:'\uD83D\uDE80'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'pipeline',l:'Code Tools',i:'\u2728'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'gen',l:'Code Generator',i:'\u26A1'},{id:'diag',l:'Diagnostics',i:'\uD83D\uDD0D'}];if(user.role==='admin')tabs.push({id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100vh'}},
     React.createElement('div',{className:'header'},
       React.createElement('div',{style:{background:'var(--blue)',color:'#fff',borderRadius:6,padding:'3px 8px',fontWeight:900,fontSize:12}},'SAP'),
