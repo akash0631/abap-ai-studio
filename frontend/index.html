@@ -225,6 +225,69 @@ function Gen({token}){
     React.createElement('div',{style:{flex:1,overflow:'auto',borderLeft:'1px solid var(--border)',paddingLeft:16}},result?React.createElement('div',{className:'fi'},React.createElement(Fmt,{text:result})):React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Select a template and describe your requirements')));
 }
 
+
+// ── SAP Diagnostics ──
+function Diagnostics({token}){
+  const[mode,setMode]=useState('hu');
+  const[query,setQuery]=useState('');
+  const[loading,setLoading]=useState(false);
+  const[result,setResult]=useState(null);
+  
+  async function investigate(){
+    if(!query.trim())return;
+    setLoading(true);setResult(null);
+    try{
+      var d=await api('/diagnostics',{mode:mode,query:query,system:'dev'},token);
+      setResult(d);
+    }catch(x){setResult({error:x.message})}
+    setLoading(false);
+  }
+  
+  return React.createElement('div',{style:{padding:16}},
+    React.createElement('div',{style:{fontWeight:700,fontSize:16,marginBottom:12}},'🔍 SAP Diagnostics'),
+    React.createElement('div',{style:{display:'flex',gap:8,marginBottom:12,alignItems:'center'}},
+      React.createElement('select',{value:mode,onChange:function(e){setMode(e.target.value)},style:{padding:8,borderRadius:6,border:'1px solid var(--border)',fontSize:13}},
+        React.createElement('option',{value:'hu'},'HU / Delivery Investigation'),
+        React.createElement('option',{value:'error'},'Error Analysis'),
+        React.createElement('option',{value:'dumps'},'Short Dumps (ST22)'),
+        React.createElement('option',{value:'applogs'},'Application Logs (SLG1)')),
+      React.createElement('input',{value:query,onChange:function(e){setQuery(e.target.value)},
+        placeholder:mode==='hu'?'Enter HU number, delivery, or shipment...':mode==='dumps'?'Start date (YYYYMMDD)':mode==='applogs'?'Start date (YYYYMMDD)':'Describe the error...',
+        style:{flex:1,padding:8,borderRadius:6,border:'1px solid var(--border)',fontSize:13},
+        onKeyDown:function(e){if(e.key==='Enter')investigate()}}),
+      React.createElement('button',{className:'bg',onClick:investigate,disabled:loading},loading?'Analyzing...':'Investigate')),
+    
+    mode==='hu'?React.createElement('div',{style:{fontSize:11,color:'var(--fg4)',marginBottom:10}},'Example: Enter delivery number (e.g. 8000012345) or HU barcode to trace its full lifecycle through VEKP, VEPO, LIKP, VTTK'):null,
+    
+    loading?React.createElement('div',{style:{textAlign:'center',padding:40,color:'var(--fg3)'}},'Querying SAP tables + AI analysis... (10-15s)'):null,
+    
+    result&&!result.error?React.createElement('div',null,
+      // AI Analysis
+      result.analysis?React.createElement('div',{className:'card',style:{marginBottom:12,borderLeft:'3px solid var(--blue)'}},
+        React.createElement('div',{style:{fontWeight:700,fontSize:14,marginBottom:8,color:'var(--blue)'}},'🧠 AI Root Cause Analysis'),
+        React.createElement(Fmt,{text:result.analysis})):null,
+      
+      // Raw data tables
+      React.createElement('div',{style:{fontWeight:600,fontSize:13,marginBottom:8,marginTop:16}},'Raw SAP Data'),
+      Object.keys(result.results||{}).map(function(tbl){
+        var data=result.results[tbl];
+        if(!data.rows||data.rows.length===0)return null;
+        var cols=Object.keys(data.rows[0]);
+        return React.createElement('div',{key:tbl,className:'card',style:{marginBottom:8,padding:0,overflow:'auto'}},
+          React.createElement('div',{style:{padding:'8px 12px',fontWeight:600,fontSize:12,background:'var(--bg2)',borderBottom:'1px solid var(--border)'}},tbl.toUpperCase()+' ('+data.rows.length+' rows)'),
+          React.createElement('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:11,fontFamily:'monospace'}},
+            React.createElement('thead',null,
+              React.createElement('tr',null,cols.map(function(c){return React.createElement('th',{key:c,style:{textAlign:'left',padding:'4px 8px',borderBottom:'1px solid var(--border)',color:'var(--fg3)',fontSize:10}},c)}))),
+            React.createElement('tbody',null,
+              data.rows.slice(0,20).map(function(row,i){return React.createElement('tr',{key:i,style:{borderBottom:'1px solid var(--border-light)'}},
+                cols.map(function(c){return React.createElement('td',{key:c,style:{padding:'3px 8px',fontSize:10}},String(row[c]||'').substring(0,30))}))}))))
+      })
+    ):null,
+    
+    result&&result.error?React.createElement('div',{style:{color:'red',padding:20}},'Error: '+result.error):null
+  );
+}
+
 // ── AI Code Pipeline (NEW) ──
 function Pipeline({token}){
   const[code,setCode]=useState('');const[action,setAction]=useState('optimize');const[result,setResult]=useState('');const[loading,setLoading]=useState(false);
