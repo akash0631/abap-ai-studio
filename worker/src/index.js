@@ -213,6 +213,150 @@ export default {
         return json({error:'Not found: '+name+'. Tried as FM, function group, and program.',detected:'not_found'});
       }
 
+
+      // SAP Bridge — Create Function Group
+      if(path==='/sap/create-fg'&&request.method==='POST'){
+        const body=await request.json();
+        const sapUrl='https://sap-api.v2retail.net/api/rfc/proxy';
+        const r=await fetch(sapUrl,{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'Z_CREATE_FUNC_GROUP',IV_FUGR:body.fugr||'',IV_SHORT_TEXT:body.short_text||'',IV_DEVCLASS:body.devclass||'$TMP'})});
+        return new Response(await r.text(),{headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}});
+      }
+
+      // SAP Bridge — Create Function Module
+      if(path==='/sap/create-fm'&&request.method==='POST'){
+        const body=await request.json();
+        const sapUrl='https://sap-api.v2retail.net/api/rfc/proxy';
+        const r=await fetch(sapUrl,{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'Z_CREATE_FUNC_MODULE',IV_FM_NAME:body.fm_name||'',IV_FUGR:body.fugr||'',IV_SHORT_TEXT:body.short_text||'',IV_REMOTE:body.remote||'X',IV_IMPORT_JSON:body.import_json||'',IV_EXPORT_JSON:body.export_json||'',IV_EXCEPTION_JSON:body.exception_json||'',IV_SOURCE:body.source||''})});
+        return new Response(await r.text(),{headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}});
+      }
+
+      // SAP Bridge — Activate Object
+      if(path==='/sap/activate'&&request.method==='POST'){
+        const body=await request.json();
+        const sapUrl='https://sap-api.v2retail.net/api/rfc/proxy';
+        const r=await fetch(sapUrl,{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'Z_ACTIVATE_OBJECT',IV_OBJECT_NAME:body.object_name||'',IV_OBJECT_TYPE:body.object_type||'REPS'})});
+        return new Response(await r.text(),{headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}});
+      }
+
+      // SAP Bridge — Create Z-Table
+      if(path==='/sap/create-table'&&request.method==='POST'){
+        const body=await request.json();
+        const sapUrl='https://sap-api.v2retail.net/api/rfc/proxy';
+        const r=await fetch(sapUrl,{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'Z_CREATE_ZTABLE',IV_TABNAME:body.tabname||'',IV_SHORT_TEXT:body.short_text||'',IV_FIELDS_JSON:body.fields_json||''})});
+        return new Response(await r.text(),{headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}});
+      }
+
+
+      // Full Automated Deploy — creates FG, FM, uploads source, activates
+      if(path==='/pipeline/full-deploy'&&request.method==='POST'){
+        const body=await request.json();
+        const sapUrl='https://sap-api.v2retail.net/api/abapstudio';
+        const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
+        
+        async function callSap(endpoint,payload){
+          var r=await fetch(sapUrl+'/'+endpoint,{method:'POST',headers:sapH,body:JSON.stringify(payload)});
+          return await r.json();
+        }
+
+        var result={steps:[],success:false};
+        var fmName=body.fm_name||'';
+        var fgName=body.fg_name||'';
+        var source=body.source||'';
+        var shortText=body.short_text||fmName;
+        var importJson=body.import_json||'';
+        var exportJson=body.export_json||'';
+        var exceptionJson=body.exception_json||'';
+        var devclass=body.devclass||'$TMP';
+
+        if(!fmName||!source)return err('fm_name and source are required');
+
+        try{
+          // Step 1: Check if FM already exists
+          var check=await callSap('query',{sql:"SELECT FUNCNAME, PNAME FROM TFDIR WHERE FUNCNAME = '"+fmName.toUpperCase()+"'"});
+          var fmExists=check.rows&&check.rows.length>0;
+          
+          if(fmExists){
+            // FM exists — just update source and activate
+            var pname=check.rows[0].PNAME;
+            var fg=pname.replace('SAPL','');
+            var includeNum='01';
+            // Find the include number
+            var incCheck=await callSap('query',{sql:"SELECT INCLUDE FROM TFDIR WHERE FUNCNAME = '"+fmName.toUpperCase()+"'"});
+            if(incCheck.rows&&incCheck.rows[0])includeNum=incCheck.rows[0].INCLUDE||'01';
+            if(includeNum.length===1)includeNum='0'+includeNum;
+            var includeProg='L'+fg+'U'+includeNum;
+            
+            result.steps.push({step:'check',status:'exists',fg:fg,include:includeProg});
+            
+            // Upload source to the include
+            var upload=await callSap('deploy',{program:includeProg,source:source,title:shortText});
+            result.steps.push({step:'upload',status:upload.status||'?',message:upload.message||''});
+            
+            // Activate
+            var activate=await callSap('activate',{object_name:includeProg,object_type:'REPS'});
+            result.steps.push({step:'activate',status:activate.ev_type||'?',message:activate.ev_message||''});
+            
+          }else{
+            // FM doesn't exist — full creation pipeline
+            
+            // Step 2: Create function group (if needed)
+            if(!fgName){
+              // Derive FG name from FM name (e.g. ZSRM_VENDOR_LOGIN_VALIDATE → ZSRM_VENDOR)
+              var parts=fmName.split('_');
+              fgName=parts.slice(0,Math.min(3,parts.length)).join('_');
+            }
+            
+            // Check if FG exists
+            var fgCheck=await callSap('query',{sql:"SELECT FUNCNAME FROM TFDIR WHERE PNAME = 'SAPL"+fgName.toUpperCase()+"'"});
+            if(!fgCheck.rows||fgCheck.rows.length===0){
+              // Create FG
+              var fgResult=await callSap('create-fg',{fugr:fgName,short_text:'Function group '+fgName,devclass:devclass});
+              result.steps.push({step:'create_fg',name:fgName,status:fgResult.ev_type||'?',message:fgResult.ev_message||''});
+            }else{
+              result.steps.push({step:'create_fg',name:fgName,status:'S',message:'Already exists ('+fgCheck.rows.length+' FMs)'});
+            }
+            
+            // Step 3: Create function module
+            var fmResult=await callSap('create-fm',{
+              fm_name:fmName,
+              fugr:fgName,
+              short_text:shortText,
+              remote:'X',
+              import_json:importJson,
+              export_json:exportJson,
+              exception_json:exceptionJson,
+              source:source
+            });
+            result.steps.push({step:'create_fm',name:fmName,status:fmResult.ev_type||'?',message:fmResult.ev_message||'',include:fmResult.ev_include||''});
+            
+            // Step 4: Activate
+            var includeName=fmResult.ev_include||'';
+            if(includeName){
+              var actResult=await callSap('activate',{object_name:includeName,object_type:'REPS'});
+              result.steps.push({step:'activate',status:actResult.ev_type||'?',message:actResult.ev_message||''});
+            }
+          }
+          
+          // Step 5: Verify — read back the source
+          var verifyCheck=await callSap('query',{sql:"SELECT FUNCNAME, PNAME, INCLUDE FROM TFDIR WHERE FUNCNAME = '"+fmName.toUpperCase()+"'"});
+          if(verifyCheck.rows&&verifyCheck.rows.length>0){
+            result.steps.push({step:'verify',status:'S',message:'FM exists in TFDIR',data:verifyCheck.rows[0]});
+            result.success=true;
+          }else{
+            result.steps.push({step:'verify',status:'E',message:'FM not found in TFDIR after deploy'});
+          }
+
+          // Log to central
+          centralLog('info','Full deploy: '+fmName+(result.success?' SUCCESS':' FAILED'),{fm:fmName,fg:fgName,steps:result.steps.length}).catch(function(){});
+          centralPipelineRun('full-deploy',result.success?'success':'failed',{fm:fmName},{steps:result.steps},0).catch(function(){});
+
+        }catch(e){
+          result.steps.push({step:'error',message:e.message});
+        }
+
+        return json(result);
+      }
+
       // SAP Diagnostics — AI-driven investigation
       if(path==='/diagnostics'&&request.method==='POST'){
         const body=await request.json();
