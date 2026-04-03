@@ -476,7 +476,7 @@ export default {
           try{
             // Stage 1: Coder
             await send({stage:1,name:'Coder',status:'running',message:'Generating ABAP code from requirement...'});
-            const generated=await claudeCall(KB+'\nYou are the CODER agent. Match requirement EXACTLY. No extra params/exceptions not asked for. No hashing/crypto unless asked. No non-existent FM calls. ALPHA=IN for number padding, TO_UPPER for case change. LFA1-LOEVM compare with X. Modern ABAP 7.4+. HANA SELECT specific fields. TRY CATCH cx_root. Output COMPLETE code in ```abap blocks.',[{role:'user',content:'Generate '+template+' for: '+requirement}]);
+            const generated=await claudeCall(KB+'\nYou are the CODER agent. RULES: Match requirement EXACTLY. No extra params/exceptions. No hashing/crypto unless asked. No non-existent FM calls. ALPHA=IN for number padding, TO_UPPER for case. LFA1-LOEVM compare with X. Z-TABLE CRITICAL: Specs use logical names (VENDOR_ID) but actual SAP tables use standard fields (LIFNR for vendor, MATNR for material, WERKS for plant, KUNNR for customer). Always use SAP field names not spec names. Modern ABAP 7.4+. HANA SELECT specific fields. TRY CATCH cx_root. Output COMPLETE code in ```abap blocks.',[{role:'user',content:'Generate '+template+' for: '+requirement}]);
             await send({stage:1,name:'Coder',status:'done',chars:generated.length});
 
             // Stage 2: Reviewer
