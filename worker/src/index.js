@@ -481,7 +481,7 @@ export default {
 
             // Stage 2: Reviewer
             await send({stage:2,name:'Reviewer',status:'running',message:'Reviewing code quality and correctness...'});
-            const review=await claudeCall('You are the REVIEWER agent. Rate /10. Check: interface matches requirement, no non-existent FM calls, ALPHA vs TO_UPPER correct, no SELECT *, missing RETURN, TRY CATCH, no over-engineering (hash/crypto when spec says plain text), no unauthorized params. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',[{role:'user',content:'Review this ABAP code:\n'+generated}],4096);
+            const review=await claudeCall('You are the REVIEWER agent. Rate /10. Check: interface matches requirement, no non-existent FM calls, ALPHA vs TO_UPPER correct, no SELECT *, missing RETURN, TRY CATCH, no over-engineering, no unauthorized params. CRITICAL: Check Z-table field names - specs say VENDOR_ID but actual table uses LIFNR. Always use standard SAP field names (LIFNR, MATNR, WERKS, KUNNR, VBELN) not logical spec names. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',[{role:'user',content:'Review this ABAP code:\n'+generated}],4096);
             const rm=review.match(/([0-9]+)\/10/);
             const rating=rm?parseInt(rm[1]):0;
             const passed=rating>=8;
@@ -499,7 +499,7 @@ export default {
 
             // Stage 4: Cross-verify
             await send({stage:4,name:'Verify',status:'running',message:'Independent correctness verification...'});
-            const crossReview=await claudeCall('You are an INDEPENDENT cross-reviewer checking for over-engineering, spec violations, and phantom dependencies (non-existent FM calls). Check: 1) Interface violations (extra params/exceptions not in spec) 2) Over-engineering (hash/crypto when spec says plain text) 3) Phantom FMs (calls to non-existent functions) 4) ALPHA vs UPPER CASE misuse 5) Changed JOIN/WHERE conditions 6) Removed business logic 7) Missing RETURN 8) LFA1-LOEVM compare with X not abap_true. Rate correctness /10. List ANY issues found. Be brief.',[{role:'user',content:'Requirement: '+requirement+'\n\nFinal code to verify:\n'+finalCode.substring(0,6000)}],4096);
+            const crossReview=await claudeCall('You are an INDEPENDENT cross-reviewer checking for over-engineering, spec violations, phantom dependencies, and Z-table field name errors (specs use logical names like VENDOR_ID but actual tables use LIFNR). Check: 1) Interface violations (extra params/exceptions not in spec) 2) Over-engineering (hash/crypto when spec says plain text) 3) Phantom FMs (calls to non-existent functions) 4) ALPHA vs UPPER CASE misuse 5) Changed JOIN/WHERE conditions 6) Removed business logic 7) Missing RETURN 8) LFA1-LOEVM compare with X not abap_true. Rate correctness /10. List ANY issues found. Be brief.',[{role:'user',content:'Requirement: '+requirement+'\n\nFinal code to verify:\n'+finalCode.substring(0,6000)}],4096);
             const cm=crossReview.match(/([0-9]+)\/10/);
             const crossRating=cm?parseInt(cm[1]):0;
             await send({stage:4,name:'Verify',status:'done',rating:crossRating});
@@ -537,7 +537,7 @@ export default {
         const reviewResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-            system:'You are the REVIEWER agent. Rate /10. Check: interface matches requirement, no non-existent FM calls, ALPHA vs TO_UPPER correct, no SELECT *, missing RETURN, TRY CATCH, no over-engineering (hash/crypto when spec says plain text), no unauthorized params. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',
+            system:'You are the REVIEWER agent. Rate /10. Check: interface matches requirement, no non-existent FM calls, ALPHA vs TO_UPPER correct, no SELECT *, missing RETURN, TRY CATCH, no over-engineering, no unauthorized params. CRITICAL: Check Z-table field names - specs say VENDOR_ID but actual table uses LIFNR. Always use standard SAP field names (LIFNR, MATNR, WERKS, KUNNR, VBELN) not logical spec names. Format: RATING: X/10 ISSUES: list VERDICT: PASS or FAIL',
             messages:[{role:'user',content:'Review this ABAP code:\n'+generatedCode}]})});
         const reviewData=await reviewResp.json();
         const review=(reviewData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
@@ -579,7 +579,7 @@ export default {
         const crossResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,
-            system:'You are an INDEPENDENT cross-reviewer checking for over-engineering, spec violations, and phantom dependencies (non-existent FM calls). Check for: 1) Interface violations (extra params/exceptions not in spec) 2) Over-engineering (hash/crypto when spec says plain text) 3) Phantom FMs (calls to non-existent functions) 4) ALPHA vs UPPER CASE misuse 5) Changed JOIN/WHERE conditions 6) Removed business logic 7) Missing RETURN 8) LFA1-LOEVM compare with X not abap_true. Rate correctness /10. List ANY functional issues found. Be brief and precise.',
+            system:'You are an INDEPENDENT cross-reviewer checking for over-engineering, spec violations, phantom dependencies, and Z-table field name errors (specs use logical names like VENDOR_ID but actual tables use LIFNR). Check for: 1) Interface violations (extra params/exceptions not in spec) 2) Over-engineering (hash/crypto when spec says plain text) 3) Phantom FMs (calls to non-existent functions) 4) ALPHA vs UPPER CASE misuse 5) Changed JOIN/WHERE conditions 6) Removed business logic 7) Missing RETURN 8) LFA1-LOEVM compare with X not abap_true. Rate correctness /10. List ANY functional issues found. Be brief and precise.',
             messages:[{role:'user',content:'Requirement: '+requirement+'\n\nFinal code to verify:\n'+finalCode.substring(0,6000)}]})});
         const crossData=await crossResp.json();
         const crossReview=(crossData.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n');
