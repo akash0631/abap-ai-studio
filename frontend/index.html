@@ -231,6 +231,7 @@ function Diagnostics({token}){
   const[msgs,setMsgs]=useState([]);
   const[input,setInput]=useState('');
   const[loading,setLoading]=useState(false);
+  const[system,setSystem]=useState('prod');
   const chatEnd=React.useRef(null);
   
   React.useEffect(function(){if(chatEnd.current)chatEnd.current.scrollIntoView({behavior:'smooth'})},[msgs]);
