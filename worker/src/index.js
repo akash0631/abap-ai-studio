@@ -1,3 +1,10 @@
+
+// Central Platform Integration
+const CENTRAL_API='https://api.v2retail.net';
+const PLATFORM_KEY='v2-platform-internal-2026';
+async function centralLog(level,message,metadata){try{await fetch(CENTRAL_API+'/api/log',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':PLATFORM_KEY},body:JSON.stringify({worker_name:'abap-ai-studio',level:level,message:message,metadata:metadata||{}})});}catch(e){}}
+async function centralPipelineRun(type,status,input,output,durationMs){try{var wr=await fetch(CENTRAL_API+'/api/workers/abap-ai-studio');var wd=await wr.json();await fetch(CENTRAL_API+'/api/pipeline-run',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':PLATFORM_KEY},body:JSON.stringify({worker_id:wd.id||null,type:type,status:status,input:input,output:output,duration_ms:durationMs})});}catch(e){}}
+
 const CH={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization'};
 function json(d,s=200){return new Response(JSON.stringify(d),{status:s,headers:{'Content-Type':'application/json',...CH}})}
 function err(m,s=400){return json({error:m},s)}
@@ -387,6 +394,7 @@ export default {
         const resp=await fetch('https://sap-api.v2retail.net/api/abapstudio/deploy',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},body:JSON.stringify({program:body.program,source:body.source,title:body.title||'AI Generated',transport:body.transport||'',overwrite:'X'})});
         const data=await resp.json();
         if(env.DB)await env.DB.prepare("INSERT INTO audit_log(user_id,action,detail)VALUES(?,'deploy',?)").bind(user.id,body.program).run();
+        centralLog('info','Deploy: '+body.program,{program:body.program,user:user.username}).catch(function(){});
         return json(data);
       }
 
@@ -505,6 +513,7 @@ export default {
             await send({stage:4,name:'Verify',status:'done',rating:crossRating});
 
             // Final result
+            centralPipelineRun('abap-pipeline',crossRating>=6?'success':'failed',{requirement:requirement.substring(0,200)},{rating:rating,cross_rating:crossRating},Date.now()-Date.now()).catch(function(){});
             await send({stage:'done',final_code:finalCode,rating_initial:rating,cross_rating:crossRating,review:review,cross_review:crossReview,passed:passed});
           }catch(e){
             await send({stage:'error',message:e.message});
