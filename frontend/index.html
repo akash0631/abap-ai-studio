@@ -481,7 +481,7 @@ function App(){
       React.createElement('div',{className:'sidebar'},tabs.map(t=>React.createElement('button',{key:t.id,className:`si ${tab===t.id?'a':''}`,onClick:()=>setTab(t.id)},React.createElement('span',{style:{fontSize:15,width:18,textAlign:'center'}},t.i),t.l)),React.createElement('div',{style:{flex:1}}),React.createElement('div',{style:{padding:'6px 10px',fontSize:10,color:'var(--fg4)',borderTop:'1px solid var(--border)'}},`v3.0 \u00b7 Cloud Edition`)),
       React.createElement('div',{className:'content'},
         tab==='chat'&&React.createElement(Chat,{token}),tab==='source'&&React.createElement(Source,{token}),tab==='pipeline'&&React.createElement(Pipeline,{token}),
-        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='gen'&&React.createElement(Gen,{token}),tab==='admin'&&React.createElement(Admin,{token}),tab==='agents'&&React.createElement(AgentPipeline,{token}))));
+        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='gen'&&React.createElement(Gen,{token}),tab==='admin'&&React.createElement(Admin,{token}),tab==='diag'&&React.createElement(Diagnostics,{token}),tab==='agents'&&React.createElement(AgentPipeline,{token}))));
 }
 ReactDOM.render(React.createElement(App),document.getElementById('root'));
 </script>
