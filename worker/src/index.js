@@ -155,7 +155,7 @@ export default {
           result.info={funcname:fm.FUNCNAME,pname:fm.PNAME,include:fm.INCLUDE};
           // The include is the program that has the FM source
           // Construct proper include name: PNAME=SAPLZSRM_VENDOR, INCLUDE=02 → LZSRM_VENDORU02
-          var fgName2=fm.PNAME?(fm.PNAME.replace('SAPL','):'';
+          var fgName2=fm.PNAME?(fm.PNAME.replace('SAPL','')):'';
           var includeNum=fm.INCLUDE||'01';
           // Pad include number to 2 digits
           if(includeNum.length===1)includeNum='0'+includeNum;
