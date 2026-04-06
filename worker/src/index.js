@@ -555,7 +555,131 @@ export default {
         return json({type:progs.length?'programs':'not_found',results:progs});
       }
 
-      if(path.startsWith('/sap/')){
+
+      // ── RFC Test Console — get params + execute ──
+      if(path==='/sap/rfc-params'&&request.method==='POST'){
+        const body=await request.json();
+        const fm=(body.fm||'').trim().toUpperCase();
+        if(!fm)return err('Function module name required');
+        const sapUrl='https://sap-api.v2retail.net/api/abapstudio';
+        const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
+        var sys=body.system||'dev';
+        var qUrl=sys==='prod'?sapUrl+'/query-prod':sapUrl+'/query';
+        var qBody=sys==='prod'?{table:'FUPARAREF',fields:'PARAMTYPE,PARAMETER,STRUCTURE,FIELDNAME,OPTIONAL,DEFAULT_VAL',where:"FUNCNAME = '"+fm+"'",system:'prod',rowcount:50}:{sql:"SELECT PARAMTYPE,PARAMETER,STRUCTURE,FIELDNAME,OPTIONAL,DEFAULT_VAL FROM FUPARAREF WHERE FUNCNAME = '"+fm+"'"};
+        var pr=await fetch(qUrl,{method:'POST',headers:sapH,body:JSON.stringify(qBody)});
+        var pd=await pr.json();
+        var params=(pd.rows||[]).map(function(r){return{type:r.PARAMTYPE==='I'?'IMPORT':r.PARAMTYPE==='E'?'EXPORT':r.PARAMTYPE==='T'?'TABLE':'CHANGING',name:r.PARAMETER,structure:r.STRUCTURE||'',field:r.FIELDNAME||'',optional:r.OPTIONAL==='X',default_val:r.DEFAULT_VAL||''}});
+        return json({fm:fm,params:params,system:sys});
+      }
+
+      if(path==='/sap/rfc-execute'&&request.method==='POST'){
+        const body=await request.json();
+        const fm=(body.fm||'').trim().toUpperCase();
+        if(!fm)return err('Function module name required');
+        var env2=body.system||'dev';
+        var rfcUrl='https://sap-api.v2retail.net/api/rfc/proxy'+(env2==='prod'?'?env=prod':'');
+        var rfcBody={bapiname:fm};
+        var inputs=body.inputs||{};
+        for(var k in inputs){if(inputs[k]!==''&&inputs[k]!==null)rfcBody[k]=inputs[k]}
+        var rr=await fetch(rfcUrl,{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify(rfcBody)});
+        var rd=await rr.json();
+        if(env.DB)await env.DB.prepare("INSERT INTO audit_log(user_id,action,detail)VALUES(?,'rfc_test',?)").bind(user.id,fm+' on '+env2).run();
+        return json({fm:fm,system:env2,result:rd});
+      }
+
+      // ── Where-Used Analysis ──
+      if(path==='/sap/where-used'&&request.method==='POST'){
+        const body=await request.json();
+        const obj=(body.object||'').trim().toUpperCase();
+        const objType=body.type||'FM';
+        if(!obj)return err('Object name required');
+        const sapUrl='https://sap-api.v2retail.net/api/abapstudio/query';
+        const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
+        var results=[];
+        if(objType==='FM'){
+          var r1=await fetch(sapUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT TOP 50 ESSION,NAME,MASTER FROM WBCROSSGT WHERE ESSION = '"+obj+"' AND NAME NOT LIKE 'SAPL%' ORDER BY NAME"})});
+          var d1=await r1.json();
+          results=(d1.rows||[]).map(function(r){return{caller:r.NAME,type:'Program',called:r.ESSION}});
+        }else if(objType==='TABLE'){
+          var r2=await fetch(sapUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT TOP 50 ESSION,NAME FROM WBCROSSGT WHERE ESSION = '"+obj+"' ORDER BY NAME"})});
+          var d2=await r2.json();
+          results=(d2.rows||[]).map(function(r){return{caller:r.NAME,type:'Program',called:r.ESSION}});
+        }else{
+          var r3=await fetch(sapUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT TOP 50 NAME,MASTER FROM WBCROSSGT WHERE ESSION LIKE '%"+obj+"%' ORDER BY NAME"})});
+          var d3=await r3.json();
+          results=(d3.rows||[]).map(function(r){return{caller:r.NAME,type:'Reference',called:obj}});
+        }
+        return json({object:obj,type:objType,results:results});
+      }
+
+      // ── Error Log / ST22 Short Dumps ──
+      if(path==='/sap/error-log'&&request.method==='POST'){
+        const body=await request.json();
+        const days=body.days||7;
+        const sapUrl='https://sap-api.v2retail.net/api/abapstudio';
+        const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
+        var sys=body.system||'dev';
+        var qUrl=sys==='prod'?sapUrl+'/query-prod':sapUrl+'/query';
+        var today=new Date();var fromDate=new Date(today-days*86400000);
+        var fromStr=fromDate.toISOString().slice(0,10).replace(/-/g,'');
+        var qBody=sys==='prod'?{table:'SNAP',fields:'SEESSION,AESSION,DATUM,UZEIT,UNAME,FLIST',where:"DATUM >= '"+fromStr+"'",system:'prod',rowcount:50}:{sql:"SELECT TOP 50 SEESSION,AESSION,DATUM,UZEIT,UNAME,FLIST FROM SNAP WHERE DATUM >= '"+fromStr+"' ORDER BY DATUM DESC, UZEIT DESC"};
+        var r1=await fetch(qUrl,{method:'POST',headers:sapH,body:JSON.stringify(qBody)});
+        var d1=await r1.json();
+        var dumps=(d1.rows||[]).map(function(r){return{error_type:r.SEESSION||'',program:r.AESSION||'',date:r.DATUM||'',time:r.UZEIT||'',user:r.UNAME||'',details:r.FLIST||''}});
+        return json({system:sys,days:days,dumps:dumps});
+      }
+
+      // ── Table Data Viewer (SE16 equivalent — READ ONLY) ──
+      if(path==='/sap/table-data'&&request.method==='POST'){
+        const body=await request.json();
+        const table=(body.table||'').trim().toUpperCase();
+        if(!table)return err('Table name required');
+        if(!table.startsWith('Z')&&!table.startsWith('Y')&&!['MARA','MARM','MAKT','LQUA','VBAK','VBAP','EKKO','EKPO','BKPF','BSEG','LIPS','LIKP','MARC','MARD','MVKE','KNA1','LFA1','LFBK','T001','T001W','USR02'].includes(table))return err('Only Z/Y tables and common SAP tables allowed');
+        const sapUrl='https://sap-api.v2retail.net/api/abapstudio';
+        const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
+        var sys=body.system||'dev';
+        var where=body.where||'';
+        var limit=Math.min(body.limit||100,500);
+        var qUrl=sys==='prod'?sapUrl+'/query-prod':sapUrl+'/query';
+        var qBody=sys==='prod'?{table:table,fields:body.fields||'*',where:where,system:'prod',rowcount:limit}:{sql:"SELECT TOP "+limit+" "+(body.fields||'*')+" FROM "+table+(where?" WHERE "+where:'')};
+        var r1=await fetch(qUrl,{method:'POST',headers:sapH,body:JSON.stringify(qBody)});
+        var d1=await r1.json();
+        return json({table:table,system:sys,row_count:d1.row_count||(d1.rows||[]).length,rows:d1.rows||[],error:d1.error||null});
+      }
+
+      // ── Job Monitor (SM37 equivalent) ──
+      if(path==='/sap/jobs'&&request.method==='POST'){
+        const body=await request.json();
+        const sapUrl='https://sap-api.v2retail.net/api/abapstudio';
+        const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
+        var sys=body.system||'dev';
+        var status=body.status||'';
+        var qUrl=sys==='prod'?sapUrl+'/query-prod':sapUrl+'/query';
+        var where="SDLSTRTDT >= '20260401'";
+        if(status)where+=" AND STATUS = '"+status+"'";
+        var qBody=sys==='prod'?{table:'TBTCO',fields:'JOBNAME,SDLSTRTDT,SDLSTRTTM,STATUS,EVENTID,AUTHCKNAM',where:where,system:'prod',rowcount:50}:{sql:"SELECT TOP 50 JOBNAME,SDLSTRTDT,SDLSTRTTM,STATUS,EVENTID,AUTHCKNAM FROM TBTCO WHERE "+where+" ORDER BY SDLSTRTDT DESC"};
+        var r1=await fetch(qUrl,{method:'POST',headers:sapH,body:JSON.stringify(qBody)});
+        var d1=await r1.json();
+        var statusMap={'S':'Scheduled','R':'Running','F':'Finished','A':'Aborted','P':'Ready','Y':'Superceded','X':'Unknown'};
+        var jobs=(d1.rows||[]).map(function(r){return{name:r.JOBNAME||'',date:r.SDLSTRTDT||'',time:(r.SDLSTRTTM||'').substring(0,6),status:statusMap[r.STATUS]||r.STATUS||'?',status_code:r.STATUS||'',user:r.AUTHCKNAM||''}});
+        return json({system:sys,jobs:jobs});
+      }
+
+      // ── Auto-Documentation — AI generates tech spec from FM source ──
+      if(path==='/sap/auto-doc'&&request.method==='POST'){
+        const body=await request.json();
+        const source=body.source||'';
+        const name=body.name||'Unknown';
+        if(!source||source.length<20)return err('Source code required');
+        var prompt='Generate a technical specification document for this ABAP code. Include: 1) Purpose/Description 2) Input parameters with types 3) Output parameters 4) Tables accessed (with operation: read/write/update) 5) Business logic flow (numbered steps) 6) Error handling 7) Dependencies (called FMs/performs) 8) Performance notes. Format as clean markdown.\n\n```abap\n'+source.substring(0,6000)+'\n```';
+        var r1=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,system:'You are an SAP ABAP documentation specialist. Generate clear, concise technical documentation.',messages:[{role:'user',content:prompt}]})});
+        var d1=await r1.json();
+        var doc=(d1.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n');
+        return json({name:name,documentation:doc});
+      }
+
+
+            if(path.startsWith('/sap/')){
         const sapEndpoint=path.replace('/sap/','');
         const sapUrl='https://sap-api.v2retail.net/api/abapstudio/'+sapEndpoint;
         let body=null;
