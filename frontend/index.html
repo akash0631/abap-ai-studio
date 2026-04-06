@@ -466,13 +466,89 @@ function AgentPipeline({token}){
     result&&result.error?React.createElement('div',{style:{color:'var(--red)',padding:20}},'Error: '+result.error):null);
 }
 
+
+// ── RFC Test Console ──
+function RfcTest({token}){
+  const[fm,setFm]=useState('');const[params,setParams]=useState([]);const[inputs,setInputs]=useState({});const[result,setResult]=useState(null);const[loading,setLoading]=useState(false);const[sys,setSys]=useState('dev');
+  async function loadParams(){if(!fm.trim())return;setLoading(true);setParams([]);setResult(null);setInputs({});try{const d=await api('/sap/rfc-params',{fm:fm.trim(),system:sys},token);setParams(d.params||[]);var def={};(d.params||[]).forEach(function(p){if(p.type==='IMPORT')def[p.name]=p.default_val||''});setInputs(def)}catch(x){setResult({error:x.message})}setLoading(false)}
+  async function execute(){setLoading(true);setResult(null);try{const d=await api('/sap/rfc-execute',{fm:fm.trim(),system:sys,inputs:inputs},token);setResult(d.result)}catch(x){setResult({error:x.message})}setLoading(false)}
+  var imports=params.filter(function(p){return p.type==='IMPORT'});
+  var exports=params.filter(function(p){return p.type==='EXPORT'});
+  var tables=params.filter(function(p){return p.type==='TABLE'});
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{className:'toolbar'},
+      React.createElement('select',{value:sys,onChange:function(e){setSys(e.target.value)},style:{width:90}},React.createElement('option',{value:'dev'},'DEV'),React.createElement('option',{value:'prod'},'PROD')),
+      React.createElement('input',{value:fm,onChange:function(e){setFm(e.target.value)},placeholder:'Function Module e.g. ZWM_HU_QUAN',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')loadParams()}}),
+      React.createElement('button',{className:'bp',onClick:loadParams,disabled:loading},'Load Params'),
+      params.length>0&&React.createElement('button',{className:'bp',onClick:execute,disabled:loading,style:{background:'#059669'}},'Execute')),
+    React.createElement('div',{style:{display:'flex',gap:14,flex:1,overflow:'hidden'}},
+      React.createElement('div',{style:{width:300,overflow:'auto',borderRight:'1px solid var(--border)',paddingRight:12}},
+        imports.length>0&&React.createElement('div',null,React.createElement('div',{style:{fontSize:11,fontWeight:700,color:'var(--fg3)',marginBottom:6}},'IMPORT PARAMETERS'),imports.map(function(p){return React.createElement('div',{key:p.name,style:{marginBottom:8}},React.createElement('label',{style:{fontSize:12,fontWeight:600,display:'block',marginBottom:2}},p.name,p.optional&&React.createElement('span',{style:{color:'var(--fg4)',fontWeight:400}},' (optional)')),React.createElement('input',{value:inputs[p.name]||'',onChange:function(e){var n=Object.assign({},inputs);n[p.name]=e.target.value;setInputs(n)},placeholder:p.structure||p.field||'value',style:{width:'100%',fontSize:12}}))})),
+        tables.length>0&&React.createElement('div',{style:{marginTop:12}},React.createElement('div',{style:{fontSize:11,fontWeight:700,color:'var(--fg3)',marginBottom:6}},'TABLE PARAMETERS'),tables.map(function(p){return React.createElement('div',{key:p.name,style:{fontSize:12,color:'var(--fg4)',marginBottom:4}},p.name,' (',p.structure,')')})),
+        exports.length>0&&React.createElement('div',{style:{marginTop:12}},React.createElement('div',{style:{fontSize:11,fontWeight:700,color:'var(--fg3)',marginBottom:6}},'EXPORT PARAMETERS'),exports.map(function(p){return React.createElement('div',{key:p.name,style:{fontSize:12,color:'var(--fg4)',marginBottom:4}},p.name,' (',p.structure,')')}))),
+      React.createElement('div',{style:{flex:1,overflow:'auto'}},
+        result?React.createElement('pre',{className:'code',style:{whiteSpace:'pre-wrap',fontSize:12}},JSON.stringify(result,null,2)):
+        params.length===0?React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Enter a function module name and click Load Params. Then fill in values and Execute.'):
+        React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Fill in parameters on the left and click Execute'))));
+}
+
+// ── Where-Used Analysis ──
+function WhereUsed({token}){
+  const[obj,setObj]=useState('');const[type,setType]=useState('FM');const[results,setResults]=useState([]);const[loading,setLoading]=useState(false);
+  async function go(){if(!obj.trim())return;setLoading(true);try{const d=await api('/sap/where-used',{object:obj.trim(),type:type},token);setResults(d.results||[])}catch(x){setResults([])}setLoading(false)}
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{className:'toolbar'},
+      React.createElement('select',{value:type,onChange:function(e){setType(e.target.value)},style:{width:140}},React.createElement('option',{value:'FM'},'Function Module'),React.createElement('option',{value:'TABLE'},'Table'),React.createElement('option',{value:'ANY'},'Any Object')),
+      React.createElement('input',{value:obj,onChange:function(e){setObj(e.target.value)},placeholder:'e.g. ZWM_CREATE_HU_AND_ASSIGN, ZSDC_FLRMSTR',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')go()}}),
+      React.createElement('button',{className:'bp',onClick:go,disabled:loading},'Find References')),
+    results.length>0?React.createElement(DataTable,{rows:results.map(function(r){return{Caller:r.caller,Type:r.type,References:r.called}})}):React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Search for references to any FM, table, or object'));
+}
+
+// ── Error Log / ST22 ──
+function ErrorLog({token}){
+  const[dumps,setDumps]=useState([]);const[sys,setSys]=useState('prod');const[days,setDays]=useState(7);const[loading,setLoading]=useState(false);
+  async function go(){setLoading(true);try{const d=await api('/sap/error-log',{system:sys,days:days},token);setDumps(d.dumps||[])}catch(x){setDumps([])}setLoading(false)}
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{className:'toolbar'},
+      React.createElement('select',{value:sys,onChange:function(e){setSys(e.target.value)},style:{width:90}},React.createElement('option',{value:'dev'},'DEV'),React.createElement('option',{value:'prod'},'PROD')),
+      React.createElement('select',{value:days,onChange:function(e){setDays(parseInt(e.target.value))},style:{width:100}},React.createElement('option',{value:1},'Last 1 day'),React.createElement('option',{value:3},'Last 3 days'),React.createElement('option',{value:7},'Last 7 days'),React.createElement('option',{value:30},'Last 30 days')),
+      React.createElement('button',{className:'bp',onClick:go,disabled:loading},'Load Dumps')),
+    dumps.length>0?React.createElement(DataTable,{rows:dumps.map(function(d){return{Date:d.date,Time:d.time,User:d.user,Error:d.error_type,Program:d.program,Details:(d.details||'').substring(0,60)}})}):React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Select system and time range, then click Load Dumps'));
+}
+
+// ── Table Data Viewer (SE16) ──
+function TableView({token}){
+  const[table,setTable]=useState('');const[where,setWhere]=useState('');const[rows,setRows]=useState([]);const[sys,setSys]=useState('dev');const[loading,setLoading]=useState(false);const[err2,setErr2]=useState('');
+  async function go(){if(!table.trim())return;setLoading(true);setErr2('');setRows([]);try{const d=await api('/sap/table-data',{table:table.trim(),where:where,system:sys,limit:100},token);if(d.error){setErr2(d.error)}else{setRows(d.rows||[])}}catch(x){setErr2(x.message)}setLoading(false)}
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{className:'toolbar'},
+      React.createElement('select',{value:sys,onChange:function(e){setSys(e.target.value)},style:{width:90}},React.createElement('option',{value:'dev'},'DEV'),React.createElement('option',{value:'prod'},'PROD')),
+      React.createElement('input',{value:table,onChange:function(e){setTable(e.target.value)},placeholder:'Table name e.g. ZSDC_FLRMSTR',style:{width:180}}),
+      React.createElement('input',{value:where,onChange:function(e){setWhere(e.target.value)},placeholder:'WHERE clause (optional)',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')go()}}),
+      React.createElement('button',{className:'bp',onClick:go,disabled:loading},'View Data')),
+    err2&&React.createElement('div',{style:{color:'var(--red)',fontSize:13,marginBottom:8}},err2),
+    rows.length>0?React.createElement(DataTable,{rows:rows}):React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Enter a Z/Y table or common SAP table and browse data (read-only)'));
+}
+
+// ── Job Monitor (SM37) ──
+function JobMonitor({token}){
+  const[jobs,setJobs]=useState([]);const[sys,setSys]=useState('prod');const[status,setStatus]=useState('');const[loading,setLoading]=useState(false);
+  async function go(){setLoading(true);try{const d=await api('/sap/jobs',{system:sys,status:status},token);setJobs(d.jobs||[])}catch(x){setJobs([])}setLoading(false)}
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{className:'toolbar'},
+      React.createElement('select',{value:sys,onChange:function(e){setSys(e.target.value)},style:{width:90}},React.createElement('option',{value:'dev'},'DEV'),React.createElement('option',{value:'prod'},'PROD')),
+      React.createElement('select',{value:status,onChange:function(e){setStatus(e.target.value)},style:{width:120}},React.createElement('option',{value:''},'All Status'),React.createElement('option',{value:'A'},'Aborted'),React.createElement('option',{value:'F'},'Finished'),React.createElement('option',{value:'R'},'Running'),React.createElement('option',{value:'S'},'Scheduled')),
+      React.createElement('button',{className:'bp',onClick:go,disabled:loading},'Load Jobs')),
+    jobs.length>0?React.createElement(DataTable,{rows:jobs.map(function(j){return{Job:j.name,Date:j.date,Time:j.time,Status:j.status,User:j.user}})}):React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Select system and status filter, then load background jobs'));
+}
+
 function App(){
   const[token,setToken]=useState(localStorage.getItem('at'));const[user,setUser]=useState(()=>{try{return JSON.parse(localStorage.getItem('au'))}catch{return null}});
   const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);
   useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);
   function logout(){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null)}
   if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});
-  const tabs=[{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'agents',l:'Agent Pipeline',i:'\uD83D\uDE80'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'pipeline',l:'Code Tools',i:'\u2728'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'gen',l:'Code Generator',i:'\u26A1'},{id:'diag',l:'Diagnostics',i:'\uD83D\uDD0D'}];if(user.role==='admin')tabs.push({id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
+  const tabs=[{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'pipeline',l:'Agent Pipeline',i:'\u2728'},{id:'rfctest',l:'RFC Tester',i:'\u25B6'},{id:'whereused',l:'Where-Used',i:'\uD83D\uDD0D'},{id:'errorlog',l:'Error Log',i:'\u26A0'},{id:'tableview',l:'Table Viewer',i:'\uD83D\uDCCB'},{id:'jobs',l:'Job Monitor',i:'\u23F0'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'gen',l:'Code Generator',i:'\u26A1'}]if(user.role==='admin')tabs.push({id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100vh'}},
     React.createElement('div',{className:'header'},
       React.createElement('div',{style:{background:'var(--blue)',color:'#fff',borderRadius:6,padding:'3px 8px',fontWeight:900,fontSize:12}},'SAP'),
@@ -482,7 +558,7 @@ function App(){
       React.createElement('div',{className:'sidebar'},tabs.map(t=>React.createElement('button',{key:t.id,className:`si ${tab===t.id?'a':''}`,onClick:()=>setTab(t.id)},React.createElement('span',{style:{fontSize:15,width:18,textAlign:'center'}},t.i),t.l)),React.createElement('div',{style:{flex:1}}),React.createElement('div',{style:{padding:'6px 10px',fontSize:10,color:'var(--fg4)',borderTop:'1px solid var(--border)'}},`v3.0 \u00b7 Cloud Edition`)),
       React.createElement('div',{className:'content'},
         tab==='chat'&&React.createElement(Chat,{token}),tab==='source'&&React.createElement(Source,{token}),tab==='pipeline'&&React.createElement(Pipeline,{token}),
-        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='gen'&&React.createElement(Gen,{token}),tab==='admin'&&React.createElement(Admin,{token}),tab==='diag'&&React.createElement(Diagnostics,{token}),tab==='agents'&&React.createElement(AgentPipeline,{token}))));
+        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='rfctest'&&React.createElement(RfcTest,{token}),tab==='whereused'&&React.createElement(WhereUsed,{token}),tab==='errorlog'&&React.createElement(ErrorLog,{token}),tab==='tableview'&&React.createElement(TableView,{token}),tab==='jobs'&&React.createElement(JobMonitor,{token}),tab==='gen'&&React.createElement(Gen,{token}),tab==='admin'&&React.createElement(Admin,{token}),tab==='diag'&&React.createElement(Diagnostics,{token}),tab==='agents'&&React.createElement(AgentPipeline,{token}))));
 }
 ReactDOM.render(React.createElement(App),document.getElementById('root'));
 </script>
