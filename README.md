@@ -1,88 +1,39 @@
-# ABAP AI Studio — Cloud Edition
+# ABAP AI Studio
 
-Multi-user SAP ABAP AI Development Studio. Connects SAP HANA to Claude AI for code generation, review, optimization, and more.
+Cloud-based SAP ABAP development platform with AI. Runs as Cloudflare Worker.
+
+**Live:** https://abap.v2retail.net
 
 ## Architecture
-
 ```
-Browser / Claude Code / API clients
-        ↓
-Cloudflare Workers (API Gateway + Auth)
-  ├── D1 Database (users, audit log)
-  ├── KV (sessions)
-  └── Pages (frontend)
-        ↓                    ↓
-Claude API            Azure Container App
-(api.anthropic.com)     (SAP Bridge)
-                              ↓
-                     Azure VPN Gateway
-                              ↓
-                   SAP HANA Dev (192.168.144.174)
+Browser → abap.v2retail.net (CF Worker) → sap-api.v2retail.net (RFC API) → SAP
+                                        → api.anthropic.com (Claude AI)
 ```
 
-## Components
+## What This Repo Contains
+- **worker/src/index.js** — Cloudflare Worker (API gateway + embedded frontend)
+- **frontend/index.html** — React UI (15 features, compiled into worker)
+- **deploy-worker.yml** — auto-deploys on push to `worker/**` or `frontend/**`
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| `worker/` | Cloudflare Worker | API gateway, user auth, Claude proxy |
-| `azure/` | Azure Container App | FastAPI SAP bridge via VPN |
-| `frontend/` | Cloudflare Pages | React web UI |
-| `mcp-server/` | npm package | Claude Code MCP integration |
+## What This Repo Does NOT Contain
+- SAP RFC Controllers → see [rfc-api](https://github.com/akash0631/rfc-api)
+- IIS/.NET backend → managed in rfc-api
+- SAP system config → managed on Server .36
 
-## Quick Start
+## 15 Features
+AI Chat, Source Viewer (DEV+PROD), Agent Pipeline, RFC Tester, Where-Used,
+Error Log, Table Viewer, Job Monitor, Dictionary, Repository, SQL Console,
+Smart Debugger, Code Search, Code Scanner, Code Generator
 
-### 1. Cloudflare Worker
-```bash
-cd worker
-npx wrangler secret put JWT_SECRET    # any random string
-npx wrangler secret put ANTHROPIC_KEY # sk-ant-...
-npx wrangler deploy
-```
+## Development Rules (CRITICAL)
+See [DEV_WORKFLOW.md](DEV_WORKFLOW.md)
+- `main` = PRODUCTION (auto-deploys)
+- `dev` = development (safe to break)
+- NEVER use regex for HTML_B64 — string find/replace only
+- ALWAYS verify all components after deploy
 
-### 2. Azure SAP Bridge
-```bash
-cd azure
-docker build -t abap-sap-proxy .
-az containerapp create \
-  --name abap-sap-proxy \
-  --resource-group dab-rg \
-  --environment automation-env \
-  --image abap-sap-proxy \
-  --target-port 8000 \
-  --env-vars SAP_HOST=192.168.144.174 SAP_PORT=8000 SAP_CLIENT=210
-```
+## Deploy
+Push to `main` → GitHub Actions → build → Cloudflare API → live
 
-### 3. Frontend
-Open `frontend/index.html` or deploy to Cloudflare Pages.
-
-### 4. Claude Code (MCP)
-```bash
-cd mcp-server && npm install
-export ABAP_STUDIO_TOKEN="your-jwt-token"
-claude mcp add abap-studio -- node /path/to/mcp-server/index.mjs
-```
-
-## Features
-
-- **AI Chat** — ABAP questions with context-aware Claude responses
-- **Source Viewer** — Load SAP programs with AI optimization and code review
-- **Dictionary** — Browse tables, structures, data elements
-- **Repository** — Search programs, function groups, classes
-- **SQL Console** — Query SAP tables directly
-- **Code Generator** — 8 templates (Class, CDS, AMDP, ALV, BAdI, FM, BAPI, RAP)
-- **Claude Code** — Full MCP integration for terminal-based development
-
-## CI/CD
-
-- Push to `worker/**` → auto-deploys Cloudflare Worker
-- Push to `azure/**` → auto-builds and deploys Azure Container App
-
-## Environment
-
-- SAP: S4D DEV, Client 210, 192.168.144.174
-- Azure: dab-rg, Central India
-- Cloudflare: akash-bab account
-
-
-## Development
-See [DEV_WORKFLOW.md](DEV_WORKFLOW.md) for build rules, deploy commands, and incident log.
+## Team
+Different team from RFC API. Changes here do NOT affect sap-api.v2retail.net.
