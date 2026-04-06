@@ -564,10 +564,17 @@ export default {
         const sapUrl='https://sap-api.v2retail.net/api/abapstudio';
         const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
         var sys=body.system||'dev';
-        var qUrl=sys==='prod'?sapUrl+'/query-prod':sapUrl+'/query';
-        var qBody=sys==='prod'?{table:'FUPARAREF',fields:'PARAMTYPE,PARAMETER,STRUCTURE,FIELDNAME,OPTIONAL,DEFAULT_VAL',where:"FUNCNAME = '"+fm+"'",system:'prod',rowcount:50}:{sql:"SELECT PARAMTYPE,PARAMETER,STRUCTURE,FIELDNAME,OPTIONAL,DEFAULT_VAL FROM FUPARAREF WHERE FUNCNAME = '"+fm+"'"};
-        var pr=await fetch(qUrl,{method:'POST',headers:sapH,body:JSON.stringify(qBody)});
-        var pd=await pr.json();
+        var pd={rows:[]};
+        try{
+          var qUrl=sapUrl+'/query';
+          var pr=await fetch(qUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT PARAMTYPE,PARAMETER,STRUCTURE,FIELDNAME,OPTIONAL,DEFAULT_VAL FROM FUPARAREF WHERE FUNCNAME = '"+fm+"'"})});
+          pd=await pr.json();
+        }catch(e){}
+        if(!pd.rows||pd.rows.length===0){
+          var pr2=await fetch(sapUrl+'/query-prod',{method:'POST',headers:sapH,body:JSON.stringify({table:'FUPARAREF',fields:'PARAMTYPE,PARAMETER,STRUCTURE,FIELDNAME,OPTIONAL,DEFAULT_VAL',where:"FUNCNAME = '"+fm+"'",system:'prod',rowcount:50})});
+          pd=await pr2.json();
+          sys='prod';
+        }
         var params=(pd.rows||[]).map(function(r){return{type:r.PARAMTYPE==='I'?'IMPORT':r.PARAMTYPE==='E'?'EXPORT':r.PARAMTYPE==='T'?'TABLE':'CHANGING',name:r.PARAMETER,structure:r.STRUCTURE||'',field:r.FIELDNAME||'',optional:r.OPTIONAL==='X',default_val:r.DEFAULT_VAL||''}});
         return json({fm:fm,params:params,system:sys});
       }
@@ -599,6 +606,10 @@ export default {
         if(objType==='FM'){
           var r1=await fetch(sapUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT TOP 50 ESSION,NAME,MASTER FROM WBCROSSGT WHERE ESSION = '"+obj+"' AND NAME NOT LIKE 'SAPL%' ORDER BY NAME"})});
           var d1=await r1.json();
+          if(!d1.rows||d1.rows.length===0){
+            r1=await fetch(sapUrl+'-prod',{method:'POST',headers:sapH,body:JSON.stringify({table:'WBCROSSGT',fields:'ESSION,NAME,MASTER',where:"ESSION = '"+obj+"'",system:'prod',rowcount:50})});
+            d1=await r1.json();
+          }
           results=(d1.rows||[]).map(function(r){return{caller:r.NAME,type:'Program',called:r.ESSION}});
         }else if(objType==='TABLE'){
           var r2=await fetch(sapUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT TOP 50 ESSION,NAME FROM WBCROSSGT WHERE ESSION = '"+obj+"' ORDER BY NAME"})});
@@ -641,7 +652,16 @@ export default {
         var where=body.where||'';
         var limit=Math.min(body.limit||100,500);
         var qUrl=sys==='prod'?sapUrl+'/query-prod':sapUrl+'/query';
-        var qBody=sys==='prod'?{table:table,fields:body.fields||'*',where:where,system:'prod',rowcount:limit}:{sql:"SELECT TOP "+limit+" "+(body.fields||'*')+" FROM "+table+(where?" WHERE "+where:'')};
+        var fields=body.fields||'';
+        if(!fields||fields==='*'){
+          try{
+            var fResp=await fetch(sys==='prod'?sapUrl+'/query-prod':sapUrl+'/query',{method:'POST',headers:sapH,body:JSON.stringify(sys==='prod'?{table:'DD03L',fields:'FIELDNAME',where:"TABNAME = '"+table+"' AND FIELDNAME NOT LIKE '.%'",system:'prod',rowcount:50}:{sql:"SELECT FIELDNAME FROM DD03L WHERE TABNAME = '"+table+"' AND FIELDNAME NOT LIKE '.%'"})});
+            var fData=await fResp.json();
+            if(fData.rows&&fData.rows.length>0)fields=(fData.rows||[]).map(function(r){return r.FIELDNAME}).slice(0,15).join(',');
+          }catch(e){}
+        }
+        if(!fields)fields='*';
+        var qBody=sys==='prod'?{table:table,fields:fields,where:where,system:'prod',rowcount:limit}:{sql:"SELECT TOP "+limit+" "+fields+" FROM "+table+(where?" WHERE "+where:'')};
         var r1=await fetch(qUrl,{method:'POST',headers:sapH,body:JSON.stringify(qBody)});
         var d1=await r1.json();
         return json({table:table,system:sys,row_count:d1.row_count||(d1.rows||[]).length,rows:d1.rows||[],error:d1.error||null});
