@@ -229,8 +229,8 @@ export default {
         if(prodFm.rows&&prodFm.rows.length>0){
           var pfm=prodFm.rows[0];
           result.detected='function_module';
-          result.info={funcname:pfm.FUNCNAME,pname:pfm.PNAME,include:pfm.INCLUDE,system:'PROD',note:'⚠️ This FM exists on PRODUCTION only, not on DEV. Transport needed.'};
-          var pfg=pfm.PNAME?(pfm.PNAME.replace('SAPL','')):''';
+          result.info={funcname:pfm.FUNCNAME,pname:pfm.PNAME,include:pfm.INCLUDE,system:'PROD',note:'Found on PRODUCTION only (not on DEV)'}n PRODUCTION only, not on DEV. Transport needed.'};
+          var pfg=pfm.PNAME?(pfm.PNAME.replace('SAPL','')):'';
           var pInc=pfm.INCLUDE||'01';if(pInc.length===1)pInc='0'+pInc;
           var pProg='L'+pfg+'U'+pInc;
           var pSrc=await getProdSrc(pProg);
