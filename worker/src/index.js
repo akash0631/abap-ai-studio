@@ -564,9 +564,9 @@ export default {
         var sys=body.system||'dev';
         var rfcUrl='https://sap-api.v2retail.net/api/rfc/proxy'+(sys==='prod'?'?env=prod':'');
         var rfcH={'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'};
-        var pr=await fetch(rfcUrl,{method:'POST',headers:rfcH,body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'FUPARAREF',DELIMITER:'|',OPTIONS:[{TEXT:"FUNCNAME = '"+fm+"'"}],FIELDS:[{FIELDNAME:'PARAMTYPE'},{FIELDNAME:'PARAMETER'},{FIELDNAME:'STRUCTURE'},{FIELDNAME:'OPTIONAL'},{FIELDNAME:'DEFAULT_VAL'}]})});
+        var pr=await fetch(rfcUrl,{method:'POST',headers:rfcH,body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'FUPARAREF',DELIMITER:'|',OPTIONS:[{TEXT:"FUNCNAME = '"+fm+"'"}],FIELDS:[{FIELDNAME:'PARAMTYPE'},{FIELDNAME:'PARAMETER'},{FIELDNAME:'STRUCTURE'},{FIELDNAME:'OPTIONAL'}]})});
         var pd=await pr.json();
-        var params=(pd.DATA||[]).map(function(r){var cols=(r.WA||'').split('|').map(function(c){return c.trim()});return{type:cols[0]==='I'?'IMPORT':cols[0]==='E'?'EXPORT':cols[0]==='T'?'TABLE':'CHANGING',name:cols[1]||'',structure:cols[2]||'',optional:cols[3]==='X',default_val:cols[4]||''}});
+        var params=(pd.DATA||[]).map(function(r){var cols=(r.WA||'').split('|').map(function(c){return c.trim()});return{type:cols[0]==='I'?'IMPORT':cols[0]==='E'?'EXPORT':cols[0]==='T'?'TABLE':'CHANGING',name:cols[1]||'',structure:cols[2]||'',optional:cols[3]==='X'}});
         return json({fm:fm,params:params,system:sys});
       }
 
@@ -598,9 +598,9 @@ export default {
           var rfcUrl2='https://sap-api.v2retail.net/api/rfc/proxy?env=prod';
           var rfcH2={'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'};
           try{
-            var wr=await fetch(rfcUrl2,{method:'POST',headers:rfcH2,body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'WBCROSSGT',DELIMITER:'|',OPTIONS:[{TEXT:"ESSION = '"+obj+"'"}],FIELDS:[{FIELDNAME:'ESSION'},{FIELDNAME:'NAME'}],ROWCOUNT:50})});
+            var wr=await fetch(rfcUrl2,{method:'POST',headers:rfcH2,body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'WBCROSSGT',DELIMITER:'|',OPTIONS:[{TEXT:"INCLUDE LIKE '%"+obj+"%'"}],FIELDS:[{FIELDNAME:'NAME'},{FIELDNAME:'INCLUDE'}],ROWCOUNT:50})});
             var wd=await wr.json();
-            results=(wd.DATA||[]).map(function(r){var cols=(r.WA||'').split('|').map(function(c){return c.trim()});return{caller:cols[1]||'',type:'Program',called:cols[0]||obj}}).filter(function(r){return r.caller&&!r.caller.startsWith('SAPL')});
+            results=(wd.DATA||[]).map(function(r){var cols=(r.WA||'').split('|').map(function(c){return c.trim()});return{caller:cols[0]||'',type:'Program',called:cols[1]||obj}}).filter(function(r){return r.caller&&r.caller.startsWith('Z')});
           }catch(e){results=[];}
         }
         return json({object:obj,type:objType,results:results});
