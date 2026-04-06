@@ -203,61 +203,74 @@ export default {
         }
 
         // Step 4: Try PRODUCTION SAP (FMs may exist on PROD but not DEV)
-        async function sqProd(table,fields,where){
+        async function sqProd(t,f,w){
           try{
-            const r2=await fetch('https://sap-api.v2retail.net/api/abapstudio/query-prod',{
-              method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},
-              body:JSON.stringify({table:table,fields:fields,where:where,system:'prod',rowcount:50})
-            });
+            var r2=await fetch('https://sap-api.v2retail.net/api/abapstudio/query-prod',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},body:JSON.stringify({table:t,fields:f,where:w,system:'prod',rowcount:50})});
             return await r2.json();
-          }catch(e){return{rows:[]};}
+          }catch(e){return {rows:[]};}
         }
         async function getProdSrc(prog){
           try{
-            const r2=await fetch('https://sap-api.v2retail.net/api/rfc/proxy?env=prod',{
-              method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},
-              body:JSON.stringify({bapiname:'RPY_PROGRAM_READ',PROGRAM_NAME:prog})
-            });
-            const d2=await r2.json();
-            const src=(d2.SOURCE_EXTENDED||[]).map(function(s){return typeof s.LINE==='string'?s.LINE:''}).join('\n');
-            return{source:src,lines:(d2.SOURCE_EXTENDED||[]).length};
-          }catch(e){return{source:'',lines:0};}
+            var r2=await fetch('https://sap-api.v2retail.net/api/rfc/proxy?env=prod',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'RPY_PROGRAM_READ',PROGRAM_NAME:prog})});
+            var d2=await r2.json();
+            var src=(d2.SOURCE_EXTENDED||[]).map(function(s){return typeof s.LINE==='string'?s.LINE:''}).join('\n');
+            return {source:src,lines:(d2.SOURCE_EXTENDED||[]).length};
+          }catch(e){return {source:'',lines:0};}
         }
 
-        // Try FM on PROD
         var prodFm=await sqProd('TFDIR','FUNCNAME,PNAME,INCLUDE',"FUNCNAME = '"+name+"'");
         if(prodFm.rows&&prodFm.rows.length>0){
           var pfm=prodFm.rows[0];
           result.detected='function_module';
-          result.info={funcname:pfm.FUNCNAME,pname:pfm.PNAME,include:pfm.INCLUDE,system:'PROD',note:'Found on PRODUCTION only (not on DEV)'}n PRODUCTION only, not on DEV. Transport needed.'};
-          var pfg=pfm.PNAME?(pfm.PNAME.replace('SAPL','')):'';
-          var pInc=pfm.INCLUDE||'01';if(pInc.length===1)pInc='0'+pInc;
+          var pfg=(pfm.PNAME||'').replace('SAPL','');
+          var pInc=pfm.INCLUDE||'01';
+          if(pInc.length===1) pInc='0'+pInc;
           var pProg='L'+pfg+'U'+pInc;
           var pSrc=await getProdSrc(pProg);
-          if(pSrc.source){result.source=pSrc.source;result.program=pProg+' (PROD)';result.lines=pSrc.lines;}
-          // Get all FMs in that FG on PROD
+          if(pSrc.source){
+            result.source=pSrc.source;
+            result.program=pProg+' (PROD)';
+            result.lines=pSrc.lines;
+          }
           var prodAllFMs=await sqProd('TFDIR','FUNCNAME',"PNAME = '"+pfm.PNAME+"'");
-          result.info.function_group=pfg;
-          result.info.fms=(prodAllFMs.rows||[]).map(function(r){return r.FUNCNAME;});
+          result.info={
+            funcname:pfm.FUNCNAME,
+            pname:pfm.PNAME,
+            include:pfm.INCLUDE,
+            system:'PROD',
+            note:'Found on PRODUCTION only (not on DEV)',
+            function_group:pfg,
+            fms:(prodAllFMs.rows||[]).map(function(r){return r.FUNCNAME})
+          };
           return json(result);
         }
 
-        // Try FG on PROD
-        var prodFg=await sqProd('TFDIR','FUNCNAME,PNAME,INCLUDE',"PNAME = 'SAPL"+name+"'");
+        var prodFg=await sqProd('TFDIR','FUNCNAME,PNAME',"PNAME = 'SAPL"+name+"'");
         if(prodFg.rows&&prodFg.rows.length>0){
           result.detected='function_group';
-          result.info={function_group:name,pname:'SAPL'+name,fm_count:prodFg.rows.length,fms:prodFg.rows.map(function(r){return r.FUNCNAME;}),system:'PROD',note:'⚠️ This FG exists on PRODUCTION only'};
+          result.info={
+            function_group:name,
+            pname:'SAPL'+name,
+            fm_count:prodFg.rows.length,
+            fms:prodFg.rows.map(function(r){return r.FUNCNAME}),
+            system:'PROD',
+            note:'Found on PRODUCTION only'
+          };
           return json(result);
         }
 
-        // Step 5: Partial TFDIR search (LIKE) — find similar FMs
+        // Step 5: Partial TFDIR search (LIKE)
         var partialFM=await sq("SELECT TOP 20 FUNCNAME, PNAME FROM TFDIR WHERE FUNCNAME LIKE '%"+name+"%' ORDER BY FUNCNAME");
         if(!partialFM.rows||partialFM.rows.length===0){
           partialFM=await sqProd('TFDIR','FUNCNAME,PNAME',"FUNCNAME LIKE '%"+name+"%'");
         }
         if(partialFM.rows&&partialFM.rows.length>0){
           result.detected='search_results';
-          result.info={matches:partialFM.rows.map(function(r){return{name:r.FUNCNAME,fg:r.PNAME?r.PNAME.replace('SAPL',''):''};}),type:'function_modules',note:'Found similar FMs matching: '+name};
+          result.info={
+            matches:partialFM.rows.map(function(r){return {name:r.FUNCNAME,fg:(r.PNAME||'').replace('SAPL','')}}),
+            type:'function_modules',
+            note:'Similar FMs matching: '+name
+          };
           return json(result);
         }
 
@@ -265,11 +278,14 @@ export default {
         var partial=await sq("SELECT TOP 10 NAME, SUBC, UDAT FROM TRDIR WHERE NAME LIKE '%"+name+"%' ORDER BY UDAT DESC");
         if(partial.rows&&partial.rows.length>0){
           result.detected='search_results';
-          result.info={matches:partial.rows.map(function(r){return{name:r.NAME,type:r.SUBC==='F'?'Include':r.SUBC==='1'?'Report':r.SUBC==='I'?'Include':'Other'};}),type:'programs'};
+          result.info={
+            matches:partial.rows.map(function(r){return {name:r.NAME,type:r.SUBC==='F'?'Include':r.SUBC==='1'?'Report':'Other'}}),
+            type:'programs'
+          };
           return json(result);
         }
 
-        return json({error:'Not found: '+name+'. Searched DEV + PROD (TFDIR, TRDIR).',detected:'not_found'});
+        return json({error:'Not found: '+name+'. Searched DEV + PROD.',detected:'not_found'});
       }
 
 
