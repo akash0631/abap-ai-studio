@@ -61,6 +61,7 @@ async function migrate(db) {
   } catch(e) { console.error('Migration error:', e); }
 }
 
+// Deploy trigger: 2026-04-06T12:10
 export default {
   async fetch(request,env){
     if(request.method==='OPTIONS')return new Response(null,{headers:CH});
