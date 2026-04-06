@@ -24,17 +24,14 @@ jobs:
       - name: Check Worker syntax
         run: node -c worker/src/index.js
       
-      - name: Check frontend parens balance
+      - name: Check frontend HTML exists
         run: |
-          OPENS=$(grep -o '(' frontend/index.html | wc -l)
-          CLOSES=$(grep -o ')' frontend/index.html | wc -l)
-          DIFF=$((OPENS - CLOSES))
-          echo "Parentheses: $OPENS open, $CLOSES close, diff=$DIFF"
-          # Allow up to 10 diff (string content has unmatched parens)
-          if [ ${DIFF#-} -gt 15 ]; then
-            echo "ERROR: Too many unbalanced parentheses"
+          if [ ! -f frontend/index.html ]; then
+            echo "ERROR: frontend/index.html not found"
             exit 1
           fi
+          echo "Frontend HTML: $(wc -c < frontend/index.html) bytes"
+          echo "Syntax validation relies on node -c (above + below)" 
 
       - name: Build frontend into Worker
         run: |
