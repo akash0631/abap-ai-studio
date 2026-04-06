@@ -82,3 +82,7 @@ claude mcp add abap-studio -- node /path/to/mcp-server/index.mjs
 - SAP: S4D DEV, Client 210, 192.168.144.174
 - Azure: dab-rg, Central India
 - Cloudflare: akash-bab account
+
+
+## Development
+See [DEV_WORKFLOW.md](DEV_WORKFLOW.md) for build rules, deploy commands, and incident log.
