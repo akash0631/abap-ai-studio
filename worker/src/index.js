@@ -682,6 +682,103 @@ export default {
       }
 
 
+      
+      // ── Smart Debugger — paste error, get AI diagnosis + fix ──
+      if(path==='/sap/smart-debug'&&request.method==='POST'){
+        const body=await request.json();
+        const error_text=body.error||'';
+        const program=body.program||'';
+        if(!error_text&&!program)return err('Paste an error message or enter a program name');
+        var source='';
+        if(program){
+          try{
+            var sr=await fetch('https://sap-api.v2retail.net/api/rfc/proxy?env=prod',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'RPY_PROGRAM_READ',PROGRAM_NAME:program.toUpperCase()})});
+            var sd=await sr.json();
+            source=(sd.SOURCE_EXTENDED||[]).map(function(s){return typeof s.LINE==='string'?s.LINE:''}).join('\n');
+          }catch(e){}
+        }
+        var prompt='You are an SAP ABAP debugging expert. ';
+        if(error_text&&source)prompt+='The user got this error:\n'+error_text+'\n\nHere is the source code of the program:\n```abap\n'+source.substring(0,6000)+'\n```\n\nDiagnose the exact root cause. Show the exact line causing the issue. Write the corrected code.';
+        else if(error_text)prompt+='Diagnose this SAP error and suggest a fix:\n'+error_text;
+        else prompt+='Review this program for bugs, potential crashes, and issues:\n```abap\n'+source.substring(0,6000)+'\n```\nList every bug with line number and fix.';
+        var ar=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4096,messages:[{role:'user',content:prompt}]})});
+        var ad=await ar.json();
+        var diagnosis=(ad.content||[]).filter(function(b){return b.type==='text'}).map(function(b){return b.text}).join('\n');
+        if(env.DB)await env.DB.prepare("INSERT INTO audit_log(user_id,action,detail)VALUES(?,'smart_debug',?)").bind(user.id,(program||'error').substring(0,50)).run();
+        return json({diagnosis:diagnosis,program:program,had_source:!!source});
+      }
+
+      // ── Code Search — grep across Z-programs ──
+      if(path==='/sap/code-search'&&request.method==='POST'){
+        const body=await request.json();
+        const term=(body.term||'').trim().toUpperCase();
+        if(!term||term.length<3)return err('Search term must be at least 3 characters');
+        var rfcUrl='https://sap-api.v2retail.net/api/rfc/proxy?env=prod';
+        var rfcH={'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'};
+        var results=[];
+        var prefixes=body.scope||['ZWM_RFC','ZSDC','ZFI','ZGATE','ZADVERB','ZPTL','ZWM_CRATE','ZWM_PICK'];
+        for(var i=0;i<Math.min(prefixes.length,8);i++){
+          try{
+            var tr=await fetch(rfcUrl,{method:'POST',headers:rfcH,body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'TRDIR',DELIMITER:'|',OPTIONS:[{TEXT:"NAME LIKE '"+prefixes[i]+"%'"}],FIELDS:[{FIELDNAME:'NAME'}],ROWCOUNT:30})});
+            var td=await tr.json();
+            var progs=(td.DATA||[]).map(function(r){return(r.WA||'').trim()}).filter(function(n){return n});
+            for(var j=0;j<Math.min(progs.length,15);j++){
+              try{
+                var sr=await fetch(rfcUrl,{method:'POST',headers:rfcH,body:JSON.stringify({bapiname:'RPY_PROGRAM_READ',PROGRAM_NAME:progs[j]})});
+                var sd=await sr.json();
+                var lines=(sd.SOURCE_EXTENDED||[]);
+                for(var k=0;k<lines.length;k++){
+                  var ln=typeof lines[k].LINE==='string'?lines[k].LINE:'';
+                  if(ln.toUpperCase().indexOf(term)>=0){
+                    results.push({program:progs[j],line:k+1,text:ln.trim().substring(0,120)});
+                    if(results.length>=50)break;
+                  }
+                }
+              }catch(e){}
+              if(results.length>=50)break;
+            }
+          }catch(e){}
+          if(results.length>=50)break;
+        }
+        return json({term:term,results:results,scanned:prefixes});
+      }
+
+      // ── Bulk Scanner — anti-pattern detector ──
+      if(path==='/sap/bulk-scan'&&request.method==='POST'){
+        const body=await request.json();
+        var rfcUrl='https://sap-api.v2retail.net/api/rfc/proxy?env=prod';
+        var rfcH={'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'};
+        var prefix=body.prefix||'ZWM_RFC';
+        var findings=[];
+        try{
+          var tr=await fetch(rfcUrl,{method:'POST',headers:rfcH,body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'TRDIR',DELIMITER:'|',OPTIONS:[{TEXT:"NAME LIKE '"+prefix+"%'"}],FIELDS:[{FIELDNAME:'NAME'}],ROWCOUNT:20})});
+          var td=await tr.json();
+          var progs=(td.DATA||[]).map(function(r){return(r.WA||'').trim()}).filter(function(n){return n});
+          for(var j=0;j<Math.min(progs.length,10);j++){
+            try{
+              var sr=await fetch(rfcUrl,{method:'POST',headers:rfcH,body:JSON.stringify({bapiname:'RPY_PROGRAM_READ',PROGRAM_NAME:progs[j]})});
+              var sd=await sr.json();
+              var src=(sd.SOURCE_EXTENDED||[]).map(function(s){return typeof s.LINE==='string'?s.LINE:''}).join('\n');
+              var issues=[];
+              var srcLines=src.split('\n');
+              for(var k=0;k<srcLines.length;k++){
+                var u=srcLines[k].toUpperCase().trim();
+                if(u.startsWith('"'))continue;
+                if(u.indexOf('SELECT *')>=0&&u.indexOf('"')<0)issues.push({line:k+1,type:'SELECT *',severity:'HIGH',text:srcLines[k].trim().substring(0,80)});
+                if(u.indexOf('SELECT')>=0&&u.indexOf('ENDSELECT')>=0)issues.push({line:k+1,type:'SELECT...ENDSELECT',severity:'HIGH',text:'Nested cursor detected'});
+                if(u.indexOf('WAIT UP TO')>=0)issues.push({line:k+1,type:'WAIT statement',severity:'CRITICAL',text:srcLines[k].trim().substring(0,80)});
+                if(u.indexOf('BREAK-POINT')>=0&&u.indexOf('BREAK-POINT ID')<0)issues.push({line:k+1,type:'Hardcoded breakpoint',severity:'CRITICAL',text:srcLines[k].trim().substring(0,80)});
+                if(u.indexOf('SY-SUBRC')>=0&&k>0){var prev=srcLines[k-1].toUpperCase().trim();if(prev.indexOf('SELECT')>=0&&u.indexOf('IF SY-SUBRC')<0&&u.indexOf('CHECK SY-SUBRC')<0)issues.push({line:k+1,type:'Missing SY-SUBRC check',severity:'MEDIUM',text:'SELECT without error check'})}
+              }
+              if(src.indexOf('LOOP')>=0&&src.indexOf('SELECT')>=0){var inLoop=false;for(var k2=0;k2<srcLines.length;k2++){var u2=srcLines[k2].toUpperCase().trim();if(u2.startsWith('"'))continue;if(u2.indexOf('LOOP AT')>=0||u2.indexOf('LOOP ')>=0)inLoop=true;if(u2.indexOf('ENDLOOP')>=0)inLoop=false;if(inLoop&&(u2.indexOf('SELECT SINGLE')>=0||u2.indexOf('SELECT ')>=0)&&u2.indexOf('"')<0)issues.push({line:k2+1,type:'SELECT in LOOP',severity:'CRITICAL',text:srcLines[k2].trim().substring(0,80)})}}
+              if(issues.length>0)findings.push({program:progs[j],lines:srcLines.length,issues:issues});
+            }catch(e){}
+          }
+        }catch(e){}
+        return json({prefix:prefix,programs_scanned:progs?progs.length:0,findings:findings,total_issues:findings.reduce(function(a,f){return a+f.issues.length},0)});
+      }
+
+
             if(path.startsWith('/sap/')){
         const sapEndpoint=path.replace('/sap/','');
         const sapUrl='https://sap-api.v2retail.net/api/abapstudio/'+sapEndpoint;
