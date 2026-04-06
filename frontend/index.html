@@ -542,13 +542,65 @@ function JobMonitor({token}){
     jobs.length>0?React.createElement(DataTable,{rows:jobs.map(function(j){return{Job:j.name,Date:j.date,Time:j.time,Status:j.status,User:j.user}})}):React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Select system and status filter, then load background jobs'));
 }
 
+
+// ── Smart Debugger ──
+function SmartDebug({token}){
+  const[error,setError]=useState('');const[program,setProgram]=useState('');const[result,setResult]=useState('');const[loading,setLoading]=useState(false);
+  async function go(){if(!error.trim()&&!program.trim())return;setLoading(true);setResult('');try{const d=await api('/sap/smart-debug',{error:error,program:program},token);setResult(d.diagnosis||'No diagnosis')}catch(x){setResult('Error: '+x.message)}setLoading(false)}
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{style:{display:'flex',gap:12,marginBottom:12}},
+      React.createElement('div',{style:{flex:1}},
+        React.createElement('div',{style:{fontSize:12,fontWeight:600,color:'var(--fg3)',marginBottom:4}},'Error message / ST22 dump text:'),
+        React.createElement('textarea',{value:error,onChange:function(e){setError(e.target.value)},rows:4,style:{width:'100%',resize:'vertical',fontSize:12},placeholder:'Paste the error message, short dump, or ST22 text here...'})),
+      React.createElement('div',{style:{width:250}},
+        React.createElement('div',{style:{fontSize:12,fontWeight:600,color:'var(--fg3)',marginBottom:4}},'Program (optional):'),
+        React.createElement('input',{value:program,onChange:function(e){setProgram(e.target.value)},placeholder:'e.g. LZWM_GRTU01',style:{width:'100%',marginBottom:8}}),
+        React.createElement('button',{className:'bp',onClick:go,disabled:loading,style:{width:'100%'}},loading?'Diagnosing...':'Diagnose + Fix'))),
+    React.createElement('div',{style:{flex:1,overflow:'auto'}},result?React.createElement('div',{className:'fi',style:{lineHeight:1.7}},React.createElement(Fmt,{text:result})):React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:40}},'Paste an error or enter a program name. AI will read the source code, find the bug, and write the fix.')));
+}
+
+// ── Code Search ──
+function CodeSearch({token}){
+  const[term,setTerm]=useState('');const[results,setResults]=useState([]);const[loading,setLoading]=useState(false);
+  async function go(){if(!term.trim()||term.trim().length<3)return;setLoading(true);setResults([]);try{const d=await api('/sap/code-search',{term:term.trim()},token);setResults(d.results||[])}catch(x){setResults([])}setLoading(false)}
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{className:'toolbar'},
+      React.createElement('input',{value:term,onChange:function(e){setTerm(e.target.value)},placeholder:'Search across all Z-programs: e.g. ZSDC_FLRMSTR, SELECT *, WAIT UP TO',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')go()}}),
+      React.createElement('button',{className:'bp',onClick:go,disabled:loading},loading?'Searching...':'Search All Code')),
+    results.length>0?React.createElement('div',null,
+      React.createElement('div',{style:{fontSize:12,color:'var(--fg3)',marginBottom:8}},results.length+' matches found'),
+      React.createElement(DataTable,{rows:results.map(function(r){return{Program:r.program,Line:r.line,Code:r.text}})})):
+    React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Search for any text across all Z-programs on PROD. Finds every program that uses a table, FM, or pattern.'));
+}
+
+// ── Bulk Code Scanner ──
+function BulkScanner({token}){
+  const[prefix,setPrefix]=useState('ZWM_RFC');const[findings,setFindings]=useState([]);const[stats,setStats]=useState(null);const[loading,setLoading]=useState(false);
+  async function go(){setLoading(true);setFindings([]);setStats(null);try{const d=await api('/sap/bulk-scan',{prefix:prefix},token);setFindings(d.findings||[]);setStats({scanned:d.programs_scanned,total:d.total_issues})}catch(x){}setLoading(false)}
+  var sevColors={CRITICAL:'var(--red)',HIGH:'var(--amber)',MEDIUM:'var(--fg3)'};
+  return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
+    React.createElement('div',{className:'toolbar'},
+      React.createElement('select',{value:prefix,onChange:function(e){setPrefix(e.target.value)},style:{width:180}},
+        ['ZWM_RFC','ZSDC','ZFI','ZGATE','ZADVERB','ZPTL','ZWM_CRATE','ZWM_PICK','LZWM_GRT','LZWM_RFC','LZSDC'].map(function(p){return React.createElement('option',{key:p,value:p},p+'*')})),
+      React.createElement('button',{className:'bp',onClick:go,disabled:loading},loading?'Scanning...':'Scan for Anti-patterns')),
+    stats&&React.createElement('div',{style:{fontSize:13,marginBottom:10,padding:'8px 12px',background:stats.total>0?'var(--red-bg)':'var(--green-bg)',borderRadius:'var(--radius)',color:stats.total>0?'var(--red)':'var(--green)'}},stats.scanned+' programs scanned, '+stats.total+' issues found'),
+    findings.length>0?React.createElement('div',{style:{overflow:'auto',flex:1}},findings.map(function(f,i){return React.createElement('div',{key:i,className:'card',style:{marginBottom:10}},
+      React.createElement('div',{style:{fontWeight:600,fontSize:13,marginBottom:6}},f.program,' (',f.lines,' lines, ',f.issues.length,' issues)'),
+      f.issues.map(function(issue,j){return React.createElement('div',{key:j,style:{fontSize:12,padding:'4px 0',borderBottom:'1px solid var(--border)',display:'flex',gap:8}},
+        React.createElement('span',{style:{color:sevColors[issue.severity]||'var(--fg3)',fontWeight:700,width:70,flexShrink:0}},issue.severity),
+        React.createElement('span',{style:{width:40,color:'var(--fg4)',flexShrink:0}},'L'+issue.line),
+        React.createElement('span',{style:{fontWeight:600,width:130,flexShrink:0}},issue.type),
+        React.createElement('span',{style:{fontFamily:'var(--mono)',fontSize:11,color:'var(--fg2)'}},issue.text))}))})):
+    React.createElement('div',{style:{color:'var(--fg4)',textAlign:'center',marginTop:50}},'Select a program prefix and scan for anti-patterns: SELECT *, SELECT in LOOP, WAIT statements, hardcoded breakpoints'));
+}
+
 function App(){
   const[token,setToken]=useState(localStorage.getItem('at'));const[user,setUser]=useState(()=>{try{return JSON.parse(localStorage.getItem('au'))}catch{return null}});
   const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);
   useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);
   function logout(){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null)}
   if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});
-  const tabs=[{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'pipeline',l:'Agent Pipeline',i:'\u2728'},{id:'rfctest',l:'RFC Tester',i:'\u25B6'},{id:'whereused',l:'Where-Used',i:'\uD83D\uDD0D'},{id:'errorlog',l:'Error Log',i:'\u26A0'},{id:'tableview',l:'Table Viewer',i:'\uD83D\uDCCB'},{id:'jobs',l:'Job Monitor',i:'\u23F0'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'gen',l:'Code Generator',i:'\u26A1'}]if(user.role==='admin')tabs.push({id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
+  const tabs=[{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'pipeline',l:'Agent Pipeline',i:'\u2728'},{id:'rfctest',l:'RFC Tester',i:'\u25B6'},{id:'whereused',l:'Where-Used',i:'\uD83D\uDD0D'},{id:'errorlog',l:'Error Log',i:'\u26A0'},{id:'tableview',l:'Table Viewer',i:'\uD83D\uDCCB'},{id:'jobs',l:'Job Monitor',i:'\u23F0'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'debug',l:'Smart Debug',i:'\uD83D\uDC1B'},{id:'codesearch',l:'Code Search',i:'\uD83D\uDD0E'},{id:'scanner',l:'Code Scanner',i:'\uD83D\uDEE1'},{id:'gen',l:'Code Generator',i:'\u26A1'}]if(user.role==='admin')tabs.push({id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100vh'}},
     React.createElement('div',{className:'header'},
       React.createElement('div',{style:{background:'var(--blue)',color:'#fff',borderRadius:6,padding:'3px 8px',fontWeight:900,fontSize:12}},'SAP'),
@@ -558,7 +610,7 @@ function App(){
       React.createElement('div',{className:'sidebar'},tabs.map(t=>React.createElement('button',{key:t.id,className:`si ${tab===t.id?'a':''}`,onClick:()=>setTab(t.id)},React.createElement('span',{style:{fontSize:15,width:18,textAlign:'center'}},t.i),t.l)),React.createElement('div',{style:{flex:1}}),React.createElement('div',{style:{padding:'6px 10px',fontSize:10,color:'var(--fg4)',borderTop:'1px solid var(--border)'}},`v3.0 \u00b7 Cloud Edition`)),
       React.createElement('div',{className:'content'},
         tab==='chat'&&React.createElement(Chat,{token}),tab==='source'&&React.createElement(Source,{token}),tab==='pipeline'&&React.createElement(Pipeline,{token}),
-        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='rfctest'&&React.createElement(RfcTest,{token}),tab==='whereused'&&React.createElement(WhereUsed,{token}),tab==='errorlog'&&React.createElement(ErrorLog,{token}),tab==='tableview'&&React.createElement(TableView,{token}),tab==='jobs'&&React.createElement(JobMonitor,{token}),tab==='gen'&&React.createElement(Gen,{token}),tab==='admin'&&React.createElement(Admin,{token}),tab==='diag'&&React.createElement(Diagnostics,{token}),tab==='agents'&&React.createElement(AgentPipeline,{token}))));
+        tab==='dict'&&React.createElement(Dict,{token}),tab==='repo'&&React.createElement(Repo,{token}),tab==='sql'&&React.createElement(Sql,{token}),tab==='rfctest'&&React.createElement(RfcTest,{token}),tab==='whereused'&&React.createElement(WhereUsed,{token}),tab==='errorlog'&&React.createElement(ErrorLog,{token}),tab==='tableview'&&React.createElement(TableView,{token}),tab==='jobs'&&React.createElement(JobMonitor,{token}),tab==='debug'&&React.createElement(SmartDebug,{token}),tab==='codesearch'&&React.createElement(CodeSearch,{token}),tab==='scanner'&&React.createElement(BulkScanner,{token}),tab==='gen'&&React.createElement(Gen,{token}),tab==='admin'&&React.createElement(Admin,{token}),tab==='diag'&&React.createElement(Diagnostics,{token}),tab==='agents'&&React.createElement(AgentPipeline,{token}))));
 }
 ReactDOM.render(React.createElement(App),document.getElementById('root'));
 </script>
