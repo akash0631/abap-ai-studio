@@ -561,21 +561,12 @@ export default {
         const body=await request.json();
         const fm=(body.fm||'').trim().toUpperCase();
         if(!fm)return err('Function module name required');
-        const sapUrl='https://sap-api.v2retail.net/api/abapstudio';
-        const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
         var sys=body.system||'dev';
-        var pd={rows:[]};
-        try{
-          var qUrl=sapUrl+'/query';
-          var pr=await fetch(qUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT PARAMTYPE,PARAMETER,STRUCTURE,FIELDNAME,OPTIONAL,DEFAULT_VAL FROM FUPARAREF WHERE FUNCNAME = '"+fm+"'"})});
-          pd=await pr.json();
-        }catch(e){}
-        if(!pd.rows||pd.rows.length===0){
-          var pr2=await fetch(sapUrl+'/query-prod',{method:'POST',headers:sapH,body:JSON.stringify({table:'FUPARAREF',fields:'PARAMTYPE,PARAMETER,STRUCTURE,FIELDNAME,OPTIONAL,DEFAULT_VAL',where:"FUNCNAME = '"+fm+"'",system:'prod',rowcount:50})});
-          pd=await pr2.json();
-          sys='prod';
-        }
-        var params=(pd.rows||[]).map(function(r){return{type:r.PARAMTYPE==='I'?'IMPORT':r.PARAMTYPE==='E'?'EXPORT':r.PARAMTYPE==='T'?'TABLE':'CHANGING',name:r.PARAMETER,structure:r.STRUCTURE||'',field:r.FIELDNAME||'',optional:r.OPTIONAL==='X',default_val:r.DEFAULT_VAL||''}});
+        var rfcUrl='https://sap-api.v2retail.net/api/rfc/proxy'+(sys==='prod'?'?env=prod':'');
+        var rfcH={'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'};
+        var pr=await fetch(rfcUrl,{method:'POST',headers:rfcH,body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'FUPARAREF',DELIMITER:'|',OPTIONS:[{TEXT:"FUNCNAME = '"+fm+"'"}],FIELDS:[{FIELDNAME:'PARAMTYPE'},{FIELDNAME:'PARAMETER'},{FIELDNAME:'STRUCTURE'},{FIELDNAME:'OPTIONAL'},{FIELDNAME:'DEFAULT_VAL'}]})});
+        var pd=await pr.json();
+        var params=(pd.DATA||[]).map(function(r){var cols=(r.WA||'').split('|').map(function(c){return c.trim()});return{type:cols[0]==='I'?'IMPORT':cols[0]==='E'?'EXPORT':cols[0]==='T'?'TABLE':'CHANGING',name:cols[1]||'',structure:cols[2]||'',optional:cols[3]==='X',default_val:cols[4]||''}});
         return json({fm:fm,params:params,system:sys});
       }
 
@@ -603,22 +594,14 @@ export default {
         const sapUrl='https://sap-api.v2retail.net/api/abapstudio/query';
         const sapH={'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'};
         var results=[];
-        if(objType==='FM'){
-          var r1=await fetch(sapUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT TOP 50 ESSION,NAME,MASTER FROM WBCROSSGT WHERE ESSION = '"+obj+"' AND NAME NOT LIKE 'SAPL%' ORDER BY NAME"})});
-          var d1=await r1.json();
-          if(!d1.rows||d1.rows.length===0){
-            r1=await fetch(sapUrl+'-prod',{method:'POST',headers:sapH,body:JSON.stringify({table:'WBCROSSGT',fields:'ESSION,NAME,MASTER',where:"ESSION = '"+obj+"'",system:'prod',rowcount:50})});
-            d1=await r1.json();
-          }
-          results=(d1.rows||[]).map(function(r){return{caller:r.NAME,type:'Program',called:r.ESSION}});
-        }else if(objType==='TABLE'){
-          var r2=await fetch(sapUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT TOP 50 ESSION,NAME FROM WBCROSSGT WHERE ESSION = '"+obj+"' ORDER BY NAME"})});
-          var d2=await r2.json();
-          results=(d2.rows||[]).map(function(r){return{caller:r.NAME,type:'Program',called:r.ESSION}});
-        }else{
-          var r3=await fetch(sapUrl,{method:'POST',headers:sapH,body:JSON.stringify({sql:"SELECT TOP 50 NAME,MASTER FROM WBCROSSGT WHERE ESSION LIKE '%"+obj+"%' ORDER BY NAME"})});
-          var d3=await r3.json();
-          results=(d3.rows||[]).map(function(r){return{caller:r.NAME,type:'Reference',called:obj}});
+        if(objType==='FM'||objType==='TABLE'||objType==='ANY'){
+          var rfcUrl2='https://sap-api.v2retail.net/api/rfc/proxy?env=prod';
+          var rfcH2={'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'};
+          try{
+            var wr=await fetch(rfcUrl2,{method:'POST',headers:rfcH2,body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'WBCROSSGT',DELIMITER:'|',OPTIONS:[{TEXT:"ESSION = '"+obj+"'"}],FIELDS:[{FIELDNAME:'ESSION'},{FIELDNAME:'NAME'}],ROWCOUNT:50})});
+            var wd=await wr.json();
+            results=(wd.DATA||[]).map(function(r){var cols=(r.WA||'').split('|').map(function(c){return c.trim()});return{caller:cols[1]||'',type:'Program',called:cols[0]||obj}}).filter(function(r){return r.caller&&!r.caller.startsWith('SAPL')});
+          }catch(e){results=[];}
         }
         return json({object:obj,type:objType,results:results});
       }
