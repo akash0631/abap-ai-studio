@@ -1173,6 +1173,24 @@ export default {
 
             // Final result
             centralPipelineRun('abap-pipeline',crossRating>=6?'success':'failed',{requirement:requirement.substring(0,200)},{rating:rating,cross_rating:crossRating},Date.now()-Date.now()).catch(function(){});
+            // Stage 5: Interface Validator — blocks deploy if parameters don't match SE37
+            if(existingInterface){
+              await send({stage:5,name:'Interface Validator',status:'running',message:'Verifying parameters match SE37 definition...'});
+              var paramLines=existingInterface.split('\n').filter(function(l){return l.trim().indexOf('IMPORTING')>=0||l.trim().indexOf('EXPORTING')>=0||l.trim().indexOf('TABLES')>=0});
+              var mismatches=[];
+              paramLines.forEach(function(pl){var parts=pl.trim().split(/\s+/);var paramName=parts[1]||'';if(paramName&&finalCode.indexOf(paramName)<0)mismatches.push(paramName+' missing in generated code')});
+              if(finalCode.match(/\bIV_[A-Z_]+/)&&existingInterface.indexOf('IV_')<0)mismatches.push('Uses IV_ params but FM expects IM_/EX_');
+              if(finalCode.match(/\bEV_[A-Z_]+/)&&existingInterface.indexOf('EV_')<0&&existingInterface.indexOf('EX_')>=0)mismatches.push('Uses EV_ params but FM expects EX_');
+              if(mismatches.length>0){
+                await send({stage:5,name:'Interface Validator',status:'failed',message:'BLOCKED: '+mismatches.join('; ')});
+                await send({stage:'done',final_code:finalCode,rating_initial:rating,cross_rating:crossRating,review:review,blocked:true,block_reason:'Interface mismatch: '+mismatches.join(', '),warning:'DO NOT DEPLOY — parameters do not match SE37 definition'});
+                await writer.close();return;
+              }
+              await send({stage:5,name:'Interface Validator',status:'done',message:'All '+paramLines.length+' parameters verified against SE37'});
+            }else{
+              await send({stage:5,name:'Interface Validator',status:'skipped',message:'New FM — no existing interface to validate against'});
+            }
+
             await send({stage:'done',final_code:finalCode,rating_initial:rating,cross_rating:crossRating,review:review,cross_review:crossReview,passed:passed});
           }catch(e){
             await send({stage:'error',message:e.message});
