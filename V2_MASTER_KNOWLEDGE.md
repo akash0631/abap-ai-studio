@@ -302,3 +302,46 @@ All have code saved on GitHub (docs/rfc_optimization/critical_originals + critic
 5. **GitHub blocks hardcoded tokens** — use env secrets
 6. **HHT APK → R2 v2retail bucket** (not nubo)
 7. **SAP FMs: FM name ≠ FG name** — always check TFDIR.PNAME
+
+
+## HHT CONNECTIVITY ARCHITECTURE (CRITICAL)
+
+### Why v12 App Can't Use Old Tomcat URLs
+The v12 HHT app sends JSON POST to the base URL. Old Tomcat middleware
+(`192.168.151.40:16080/xmwgw`) can't handle JSON at root path.
+Also, `submitRequest()` strips the last path segment (`/xmwgw`) from the URL,
+so RFC calls go to `192.168.151.40:16080/noacljsonrfcadaptor` (missing `/xmwgw`).
+
+### Current Working Setup (v12.103)
+```
+PROD:  v2-hht-api.azurewebsites.net/api/hht → Azure Middleware → SAP PROD
+DEV:   hht-api.v2retail.net/dev → CF Worker (hht-proxy) → RFC Proxy → SAP DEV
+QA:    hht-api.v2retail.net/qa  → CF Worker (hht-proxy) → RFC Proxy → SAP QA
+```
+
+### hht-proxy Worker (hht-api.v2retail.net)
+- Accepts v12 JSON format at any path
+- `/dev` → routes to `sap-api.v2retail.net/api/rfc/proxy?env=dev`
+- `/qa` → routes to `sap-api.v2retail.net/api/rfc/proxy?env=qa`
+- Default (no path) → routes to DEV
+- Handles: `index.jsp`, `appversion`, `ping` (connectivity checks)
+- Handles: `noacljsonrfcadaptor` (RFC calls after URL stripping)
+
+### APK Server Dropdown (strings.xml)
+```xml
+<item>https://v2-hht-api.azurewebsites.net/api/hht (V2 Cloud)</item>
+<item>https://hht-api.v2retail.net/dev (Dev Cloud)</item>
+<item>https://hht-api.v2retail.net/qa (QA Cloud)</item>
+```
+NEVER use old Tomcat IPs for v12 — they cause parse errors.
+
+## PIPELINE RULES (FROM INCIDENTS)
+
+1. ALWAYS read PROD source FIRST via RPY_PROGRAM_READ before generating code
+2. ALWAYS test FM after deploying (call with blank params, check SYNTAX_ERROR)
+3. If SYNTAX_ERROR → auto-restore PROD code immediately (Stage 6 does this)
+4. Stage 5: only check params in interface block (first 20 lines), NOT entire code
+5. NEVER rewrite >50% of an FM — optimize FROM existing code
+6. NEVER remove global variables (GT_*, GS_*, GV_*)
+7. NEVER change error message text — business logic depends on exact wording
+8. FM name ≠ FG name — ALWAYS check TFDIR.PNAME for correct include name
