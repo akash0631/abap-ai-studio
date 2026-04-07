@@ -430,7 +430,32 @@ export default {
           result.steps.push({step:'error',message:e.message});
         }
 
-        return json(result);
+        
+            // Stage 6: SYNTAX TEST — call the FM with blank params to check for SYNTAX_ERROR
+            try{
+              var testBody={bapiname:fmName};
+              var testR=await fetch(sapUrl+'/proxy',{method:'POST',headers:sapH,body:JSON.stringify(testBody)});
+              var testD=await testR.json();
+              var testRet=testD.EX_RETURN||testD.ex_return||{};
+              var testMsg=(testRet.MESSAGE||testRet.message||JSON.stringify(testD)).substring(0,200);
+              var hasSyntaxErr=testMsg.toLowerCase().includes('syntax error')||testMsg.toLowerCase().includes('system_failure');
+              result.steps.push({step:'syntax_test',status:hasSyntaxErr?'FAIL':'PASS',message:hasSyntaxErr?'SYNTAX ERROR: '+testMsg:'FM callable, no syntax errors'});
+              if(hasSyntaxErr){
+                // Auto-restore from PROD
+                result.steps.push({step:'auto_restore',status:'RESTORING',message:'Syntax error detected — reading PROD source to restore'});
+                try{
+                  var prodR=await fetch(sapUrl+'/proxy?env=prod',{method:'POST',headers:sapH,body:JSON.stringify({bapiname:'RPY_PROGRAM_READ',PROGRAM_NAME:includeProg})});
+                  var prodD=await prodR.json();
+                  var prodSrc=(prodD.SOURCE_EXTENDED||[]).map(function(r){return r.LINE||''}).join('\n');
+                  if(prodSrc.length>50){
+                    await fetch(sapUrl+'/deploy',{method:'POST',headers:sapH,body:JSON.stringify({program:includeProg,source:prodSrc,title:'Auto-restored from PROD after syntax error'})});
+                    result.steps.push({step:'auto_restore',status:'RESTORED',message:'PROD code restored. AI-generated code had syntax errors.'});
+                  }
+                }catch(re){result.steps.push({step:'auto_restore',status:'FAIL',message:'Could not restore: '+re.message})}
+              }
+            }catch(te){result.steps.push({step:'syntax_test',status:'ERROR',message:te.message})}
+
+            return json(result);
       }
 
       // SAP Diagnostics — AI-driven investigation
@@ -1114,7 +1139,7 @@ export default {
         const requirement=body.requirement;
         const template=body.template||'function_module';
         if(!requirement)return err('Requirement text needed');
-        const KB='You are an SAP ABAP architect for V2 Retail (320+ stores, S4/HANA). FULL SYSTEM CONTEXT:\\n\\nSAP: DEV=192.168.144.174/210, PROD=192.168.144.170/600 (HANACIFO/S4P), QA=192.168.144.179/600. IIS .36 (192.168.151.36:9292). RFC proxy: sap-api.v2retail.net/api/rfc/proxy (?env=prod for PROD).\\n\\nCRITICAL ANTI-HALLUCINATION:\\n1. NEVER invent tables/fields/params. Only use VERIFIED tables: ZWM_USR02, ZWM_DC_MASTER, ZWM_CRATE, ZWM_GRT_PUTWAY, ZWM_DCSTK1/2/3, ZSDC_FLRMSTR (NO secondary indexes!), ZSDC_ART_STATUS, ZDISC_ARTL. Standard: MARA/MARM/MAKT/MARC/LQUA/LAGP/VBAK/VBAP/EKKO/EKPO/BKPF/BSEG/LIPS/LIKP/VEKP/VEPO/KNA1/LFA1.\\n2. V2 naming: IM_ (import), EX_ (export), IT_/ET_ (tables). NEVER IV_/EV_. Return: EX_RETURN TYPE BAPIRET2.\\n3. FM name != FG name! ZWM_CRATE_IDENTIFIER_RFC is in FG ZWM_BIN_CRATE_IDENTIFIER. Always check TFDIR.PNAME.\\n4. When modifying existing FM: keep EXACT parameter names. Read interface from FUPARAREF first.\\n5. If unsure about a table/field, SAY SO. Do NOT guess.\\n\\nCODE RULES:\\n- NEVER SELECT * — list fields. NEVER SELECT in LOOP — use FOR ALL ENTRIES/JOIN. NEVER WAIT UP TO. NEVER COMMIT in LOOP.\\n- Always SY-SUBRC check. Modern ABAP 7.4+: inline DATA(), VALUE #(), @DATA, |{ }|.\\n- Input validation FIRST. V2 pattern: IF IM_xxx IS INITIAL. EX_RETURN = VALUE #(TYPE=E MESSAGE=text). RETURN.\\n- User-plant validation: SELECT SINGLE WERKS FROM ZWM_USR02 WHERE BNAME=@IM_USER AND WERKS=@IM_PLANT.\\n\\nKNOWN ISSUES: ZSDC_FLRMSTR missing index (WERKS,LGPLA,MAJ_CAT_CD). ZWM_GRT_PUTWAY missing index (CRATE,MBLNR,TANUM). LZWM_GRTF01: 2x SELECT*. LZWM_GRTU01: SELECT SINGLE in LOOP. F_CLEAR_V04: BAPI+COMMIT in nested loop.\\n\\nHHT: Android Java app (v2-android-hht). Calls RFC via args.put(IM_xxx,value). Common bugs: wrong variable in args.put (copy-paste). Fix is usually on CALLER side, not RFC.\\n\\nFULL FLOW: Requirement→ABAP Studio(8-stage pipeline)→SAP→RFC API(.36 IIS)→SQL Server→Data API→Apps(HHT/Hub/Dashboards).\\n\\nINCIDENTS: 07-Apr-2026 AI hallucinated ZWM_CRATES table+IV_CRATE_NUMBER param→SYNTAX_ERROR. 07-Apr-2026 HHT L733 sent USER in IM_STOCK_TAKE_ID→wrong stock take data.';
+        const KB='You are an SAP ABAP architect for V2 Retail (320+ stores, S4/HANA). FULL SYSTEM CONTEXT:\\n\\nSAP: DEV=192.168.144.174/210, PROD=192.168.144.170/600 (HANACIFO/S4P), QA=192.168.144.179/600. IIS .36 (192.168.151.36:9292). RFC proxy: sap-api.v2retail.net/api/rfc/proxy (?env=prod for PROD).\\n\\nCRITICAL ANTI-HALLUCINATION:\\n1. NEVER invent tables/fields/params. Only use VERIFIED tables: ZWM_USR02, ZWM_DC_MASTER, ZWM_CRATE, ZWM_GRT_PUTWAY, ZWM_DCSTK1/2/3, ZSDC_FLRMSTR (NO secondary indexes!), ZSDC_ART_STATUS, ZDISC_ARTL. Standard: MARA/MARM/MAKT/MARC/LQUA/LAGP/VBAK/VBAP/EKKO/EKPO/BKPF/BSEG/LIPS/LIKP/VEKP/VEPO/KNA1/LFA1.\\n2. V2 naming: IM_ (import), EX_ (export), IT_/ET_ (tables). NEVER IV_/EV_. Return: EX_RETURN TYPE BAPIRET2.\\n3. FM name != FG name! ZWM_CRATE_IDENTIFIER_RFC is in FG ZWM_BIN_CRATE_IDENTIFIER. Always check TFDIR.PNAME.\\n4. When modifying existing FM: keep EXACT parameter names. Read interface from FUPARAREF first.\\n5. If unsure about a table/field, SAY SO. Do NOT guess.\\n\\nCODE RULES:\\n- NEVER SELECT * — list fields. NEVER SELECT in LOOP — use FOR ALL ENTRIES/JOIN. NEVER WAIT UP TO. NEVER COMMIT in LOOP.\\n- Always SY-SUBRC check. Modern ABAP 7.4+: inline DATA(), VALUE #(), @DATA, |{ }|.\\n- Input validation FIRST. V2 pattern: IF IM_xxx IS INITIAL. EX_RETURN = VALUE #(TYPE=E MESSAGE=text). RETURN.\\n- User-plant validation: SELECT SINGLE WERKS FROM ZWM_USR02 WHERE BNAME=@IM_USER AND WERKS=@IM_PLANT.\\n\\nKNOWN ISSUES: ZSDC_FLRMSTR missing index (WERKS,LGPLA,MAJ_CAT_CD). ZWM_GRT_PUTWAY missing index (CRATE,MBLNR,TANUM). LZWM_GRTF01: 2x SELECT*. LZWM_GRTU01: SELECT SINGLE in LOOP. F_CLEAR_V04: BAPI+COMMIT in nested loop.\\n\\nHHT: Android Java app (v2-android-hht). Calls RFC via args.put(IM_xxx,value). Common bugs: wrong variable in args.put (copy-paste). Fix is usually on CALLER side, not RFC.\\n\\nFULL FLOW: Requirement→ABAP Studio(8-stage pipeline)→SAP→RFC API(.36 IIS)→SQL Server→Data API→Apps(HHT/Hub/Dashboards).\\n\\nINCIDENTS: 07-Apr-2026 AI hallucinated ZWM_CRATES table+IV_CRATE_NUMBER param→SYNTAX_ERROR. 07-Apr-2026 HHT L733 sent USER in IM_STOCK_TAKE_ID→wrong stock take data.\n\nCRITICAL PIPELINE RULES (from incidents):\n1. ALWAYS read PROD source FIRST via RPY_PROGRAM_READ before generating any code. Optimize FROM existing code, NEVER rewrite from scratch.\n2. After deploying, ALWAYS call the FM with blank params to check for SYNTAX_ERROR. If syntax error, auto-restore PROD code.\n3. If >50%% of lines change vs PROD, WARN and require confirmation.\n4. NEVER remove global variables (GT_*, GS_*) — they are shared across the function group.\n5. NEVER change error messages — business logic depends on exact message text.';
         const encoder=new TextEncoder();
         const stream=new TransformStream();
         const writer=stream.writable.getWriter();
