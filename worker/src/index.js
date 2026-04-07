@@ -1106,7 +1106,7 @@ export default {
         const requirement=body.requirement;
         const template=body.template||'function_module';
         if(!requirement)return err('Requirement text needed');
-        const KB='You are an elite SAP ABAP architect. S4D DEV 192.168.144.174 Client 210. Always modern ABAP 7.4+. HANA-optimized. Production-ready code with full error handling.';
+        const KB='You are an SAP ABAP architect for V2 Retail (320+ stores). SAP DEV: 192.168.144.174, Client 210.\n\nCRITICAL RULES:\n1. NEVER HALLUCINATE: Only use tables, fields, and parameters that ACTUALLY EXIST in the SAP system. If unsure, say so.\n2. MATCH INTERFACE EXACTLY: When modifying an existing FM, keep the EXACT same parameter names (IM_USER not IV_USER), types, and OPTIONAL flags from the Local Interface comment block.\n3. V2 naming: IM_* (import), EX_* (export), IT_*/ET_* (tables). Return: EX_RETURN TYPE BAPIRET2.\n4. NEVER use SELECT * — always list specific fields.\n5. NEVER use SELECT inside LOOP — bulk read first, then LOOP AT internal table.\n6. NEVER use WAIT UP TO.\n7. Always check SY-SUBRC after SELECT.\n8. Use modern ABAP 7.4+: inline DATA(), VALUE #(), string templates |{ }|, @DATA in SELECT.\n9. V2 standard error pattern: EX_RETURN = VALUE #( TYPE = E MESSAGE = text ). RETURN.\n10. Input validation FIRST: check every IMPORT parameter for IS INITIAL before any DB access.\n\nV2 VERIFIED TABLES: ZWM_USR02 (user-plant), ZWM_DC_MASTER (DC config), ZWM_CRATE (crate-bin), ZWM_GRT_PUTWAY (GRT tracking), ZSDC_FLRMSTR (floor master), ZSDC_ART_STATUS, ZDISC_ARTL. SAP standard: MARA, MARM, MAKT, MARC, LQUA, LAGP, VBAK, VBAP, EKKO, EKPO, BKPF, BSEG, LIPS, LIKP, VEKP, VEPO, KNA1, LFA1.\n\nWhen given EXISTING source code to optimize: keep ALL parameters identical, keep ALL error messages identical, only change the HOW not the WHAT. Never add or remove parameters.\n\nINCIDENT REFERENCE: On 07-Apr-2026, AI hallucinated ZWM_CRATES table and IV_CRATE_NUMBER parameter — both dont exist. Caused SYNTAX_ERROR dump. NEVER repeat this.';
         const encoder=new TextEncoder();
         const stream=new TransformStream();
         const writer=stream.writable.getWriter();
@@ -1122,9 +1122,28 @@ export default {
 
         (async function(){
           try{
+            // Stage 0: Read existing FM interface from SAP (safety check)
+            var existingInterface='';
+            var existingSource='';
+            try{
+              var fmMatch=requirement.match(/\b(Z[A-Z_]+_RFC|Z[A-Z_]+)\b/);
+              if(fmMatch){
+                var fmName=fmMatch[1];
+                await send({stage:0,name:'Interface Check',status:'running',message:'Reading FM interface from SAP...'});
+                var ifResp=await fetch('https://sap-api.v2retail.net/api/rfc/proxy?env=prod',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'FUPARAREF',DELIMITER:'|',OPTIONS:[{TEXT:"FUNCNAME = '"+fmName+"'"}],FIELDS:[{FIELDNAME:'PARAMTYPE'},{FIELDNAME:'PARAMETER'},{FIELDNAME:'STRUCTURE'},{FIELDNAME:'OPTIONAL'}]})});
+                var ifData=await ifResp.json();
+                if(ifData.DATA&&ifData.DATA.length>0){
+                  existingInterface='EXISTING FM INTERFACE (from SE37 — you MUST use these EXACT parameter names):\n';
+                  (ifData.DATA||[]).forEach(function(r){var c=(r.WA||'').split('|').map(function(s){return s.trim()});existingInterface+=c[0]==='I'?'  IMPORTING '+c[1]+' TYPE '+c[2]+(c[3]==='X'?' OPTIONAL':'')+'\n':c[0]==='E'?'  EXPORTING '+c[1]+' TYPE '+c[2]+'\n':c[0]==='T'?'  TABLES '+c[1]+' STRUCTURE '+c[2]+'\n':'  '+c[1]+'\n'});
+                  await send({stage:0,name:'Interface Check',status:'done',message:'Found '+ifData.DATA.length+' parameters'});
+                }
+                var srcResp=await fetch('https://sap-api.v2retail.net/api/rfc/proxy?env=prod',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'RPY_PROGRAM_READ',PROGRAM_NAME:'LZWM_BIN_CRATE_IDENTIFIERU01'})});
+              }
+            }catch(e){await send({stage:0,name:'Interface Check',status:'skipped',message:'Could not read interface'});}
+
             // Stage 1: Coder
             await send({stage:1,name:'Coder',status:'running',message:'Generating ABAP code from requirement...'});
-            const generated=await claudeCall(KB+'\nYou are the CODER agent. RULES: Match requirement EXACTLY. No extra params/exceptions. No hashing/crypto unless asked. No non-existent FM calls. ALPHA=IN for number padding, TO_UPPER for case. LFA1-LOEVM compare with X. Z-TABLE CRITICAL: Specs use logical names (VENDOR_ID) but actual SAP tables use standard fields (LIFNR for vendor, MATNR for material, WERKS for plant, KUNNR for customer). Always use SAP field names not spec names. Modern ABAP 7.4+. HANA SELECT specific fields. TRY CATCH cx_root. Output COMPLETE code in ```abap blocks.',[{role:'user',content:'Generate '+template+' for: '+requirement}]);
+            const generated=await claudeCall(KB+'\n'+(existingInterface?'\n'+existingInterface+'\nYou MUST use the EXACT parameter names listed above. Do NOT invent new ones.\n':'')+'\nYou are the CODER agent. RULES: Match requirement EXACTLY. No extra params/exceptions. No hashing/crypto unless asked. No non-existent FM calls. ALPHA=IN for number padding, TO_UPPER for case. LFA1-LOEVM compare with X. Z-TABLE CRITICAL: Specs use logical names (VENDOR_ID) but actual SAP tables use standard fields (LIFNR for vendor, MATNR for material, WERKS for plant, KUNNR for customer). Always use SAP field names not spec names. Modern ABAP 7.4+. HANA SELECT specific fields. TRY CATCH cx_root. Output COMPLETE code in ```abap blocks.',[{role:'user',content:'Generate '+template+' for: '+requirement}]);
             await send({stage:1,name:'Coder',status:'done',chars:generated.length});
 
             // Stage 2: Reviewer
@@ -1171,9 +1190,28 @@ export default {
         const template=body.template||'abap_class';
         if(!requirement)return err('Requirement text needed');
 
-        const KB='You are an elite SAP ABAP architect. S4D DEV 192.168.144.174 Client 210. Always modern ABAP 7.4+. HANA-optimized. Production-ready code with full error handling.';
+        const KB='You are an SAP ABAP architect for V2 Retail (320+ stores). SAP DEV: 192.168.144.174, Client 210.\n\nCRITICAL RULES:\n1. NEVER HALLUCINATE: Only use tables, fields, and parameters that ACTUALLY EXIST in the SAP system. If unsure, say so.\n2. MATCH INTERFACE EXACTLY: When modifying an existing FM, keep the EXACT same parameter names (IM_USER not IV_USER), types, and OPTIONAL flags from the Local Interface comment block.\n3. V2 naming: IM_* (import), EX_* (export), IT_*/ET_* (tables). Return: EX_RETURN TYPE BAPIRET2.\n4. NEVER use SELECT * — always list specific fields.\n5. NEVER use SELECT inside LOOP — bulk read first, then LOOP AT internal table.\n6. NEVER use WAIT UP TO.\n7. Always check SY-SUBRC after SELECT.\n8. Use modern ABAP 7.4+: inline DATA(), VALUE #(), string templates |{ }|, @DATA in SELECT.\n9. V2 standard error pattern: EX_RETURN = VALUE #( TYPE = E MESSAGE = text ). RETURN.\n10. Input validation FIRST: check every IMPORT parameter for IS INITIAL before any DB access.\n\nV2 VERIFIED TABLES: ZWM_USR02 (user-plant), ZWM_DC_MASTER (DC config), ZWM_CRATE (crate-bin), ZWM_GRT_PUTWAY (GRT tracking), ZSDC_FLRMSTR (floor master), ZSDC_ART_STATUS, ZDISC_ARTL. SAP standard: MARA, MARM, MAKT, MARC, LQUA, LAGP, VBAK, VBAP, EKKO, EKPO, BKPF, BSEG, LIPS, LIKP, VEKP, VEPO, KNA1, LFA1.\n\nWhen given EXISTING source code to optimize: keep ALL parameters identical, keep ALL error messages identical, only change the HOW not the WHAT. Never add or remove parameters.\n\nINCIDENT REFERENCE: On 07-Apr-2026, AI hallucinated ZWM_CRATES table and IV_CRATE_NUMBER parameter — both dont exist. Caused SYNTAX_ERROR dump. NEVER repeat this.';
 
-        // Stage 1: Coder Agent
+        // Stage 0: Read existing FM interface from SAP (safety check)
+            var existingInterface='';
+            var existingSource='';
+            try{
+              var fmMatch=requirement.match(/\b(Z[A-Z_]+_RFC|Z[A-Z_]+)\b/);
+              if(fmMatch){
+                var fmName=fmMatch[1];
+                await send({stage:0,name:'Interface Check',status:'running',message:'Reading FM interface from SAP...'});
+                var ifResp=await fetch('https://sap-api.v2retail.net/api/rfc/proxy?env=prod',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'FUPARAREF',DELIMITER:'|',OPTIONS:[{TEXT:"FUNCNAME = '"+fmName+"'"}],FIELDS:[{FIELDNAME:'PARAMTYPE'},{FIELDNAME:'PARAMETER'},{FIELDNAME:'STRUCTURE'},{FIELDNAME:'OPTIONAL'}]})});
+                var ifData=await ifResp.json();
+                if(ifData.DATA&&ifData.DATA.length>0){
+                  existingInterface='EXISTING FM INTERFACE (from SE37 — you MUST use these EXACT parameter names):\n';
+                  (ifData.DATA||[]).forEach(function(r){var c=(r.WA||'').split('|').map(function(s){return s.trim()});existingInterface+=c[0]==='I'?'  IMPORTING '+c[1]+' TYPE '+c[2]+(c[3]==='X'?' OPTIONAL':'')+'\n':c[0]==='E'?'  EXPORTING '+c[1]+' TYPE '+c[2]+'\n':c[0]==='T'?'  TABLES '+c[1]+' STRUCTURE '+c[2]+'\n':'  '+c[1]+'\n'});
+                  await send({stage:0,name:'Interface Check',status:'done',message:'Found '+ifData.DATA.length+' parameters'});
+                }
+                var srcResp=await fetch('https://sap-api.v2retail.net/api/rfc/proxy?env=prod',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'RPY_PROGRAM_READ',PROGRAM_NAME:'LZWM_BIN_CRATE_IDENTIFIERU01'})});
+              }
+            }catch(e){await send({stage:0,name:'Interface Check',status:'skipped',message:'Could not read interface'});}
+
+            // Stage 1: Coder Agent
         const coderResp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
           headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','x-api-key':env.ANTHROPIC_KEY},
           body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8192,
