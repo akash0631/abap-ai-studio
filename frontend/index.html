@@ -632,51 +632,113 @@ function HelpGuide({token}){
 
 // ── HHT Studio ──
 function HhtStudio({token}){
-  const[status,setStatus]=useState(null);const[issue,setIssue]=useState('');const[searchQ,setSearchQ]=useState('');
-  const[searchR,setSearchR]=useState([]);const[diagnosis,setDiag]=useState('');const[fileContent,setFileContent]=useState('');
-  const[fileName,setFileName]=useState('');const[loading,setLoading]=useState(false);const[tab2,setTab2]=useState('status');
-  async function loadStatus(){setLoading(true);try{const r=await fetch('/hht/status',{headers:{'Authorization':'Bearer '+token}});setStatus(await r.json())}catch(e){}setLoading(false)}
-  React.useEffect(function(){loadStatus()},[]);
-  async function searchCode(){if(!searchQ.trim())return;setLoading(true);try{const d=await api('/hht/search',{query:searchQ},token);setSearchR(d.results||[])}catch(e){}setLoading(false)}
-  async function readFile(path){setLoading(true);try{const d=await api('/hht/read',{path:path},token);setFileContent(d.content||'');setFileName(path)}catch(e){}setLoading(false)}
-  async function diagnose(){if(!issue.trim())return;setLoading(true);setDiag('');try{const d=await api('/hht/diagnose',{issue:issue,source:fileContent,file:fileName},token);setDiag(d.diagnosis||'No diagnosis')}catch(e){setDiag('Error: '+e.message)}setLoading(false)}
-  async function deployApk(){if(!confirm('Deploy latest GitHub release APK to apk.v2retail.net?'))return;setLoading(true);try{const d=await api('/hht/deploy-apk',{},token);alert(d.success?'Deployed! '+d.version+' ('+d.size_mb+'MB)':'Failed: '+(d.error||'unknown'))}catch(e){alert('Error: '+e.message)}setLoading(false)}
-  var tabs2=[{id:'status',l:'Status'},{id:'search',l:'Code Search'},{id:'diagnose',l:'Diagnose Bug'},{id:'deploy',l:'Deploy'}];
+  const[tab2,setTab2]=useState('screens');
+  const[status,setStatus]=useState(null);
+  const[registry,setRegistry]=useState(null);
+  const[searchQ,setSearchQ]=useState('');
+  const[searchR,setSearchR]=useState([]);
+  const[fileContent,setFileContent]=useState('');
+  const[fileName,setFileName]=useState('');
+  const[issue,setIssue]=useState('');
+  const[diagnosis,setDiag]=useState('');
+  const[loading,setLoading]=useState(false);
+  const[filter,setFilter]=useState('all');
+
+  React.useEffect(function(){
+    fetch('/hht/status',{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json()).then(setStatus).catch(()=>{});
+    fetch('/hht/registry',{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json()).then(setRegistry).catch(()=>{});
+  },[]);
+
+  async function searchCode(){if(!searchQ.trim())return;setLoading(true);try{var d=await api('/hht/search',{query:searchQ},token);setSearchR(d.results||[])}catch(e){}setLoading(false)}
+  async function readFile(path){setLoading(true);try{var d=await api('/hht/read',{path:path},token);setFileContent(d.content||'');setFileName(path)}catch(e){}setLoading(false)}
+  async function diagnose(){if(!issue.trim())return;setLoading(true);setDiag('');try{var d=await api('/hht/diagnose',{issue:issue,source:fileContent,file:fileName},token);setDiag(d.diagnosis||'No diagnosis')}catch(e){setDiag('Error: '+e.message)}setLoading(false)}
+  async function deployApk(){if(!confirm('Deploy latest APK to apk.v2retail.net?'))return;setLoading(true);try{var d=await api('/hht/deploy-apk',{},token);alert(d.success?'Deployed! '+d.version+' ('+d.size_mb+'MB)':'Failed: '+(d.error||'unknown'))}catch(e){alert('Error: '+e.message)}setLoading(false)}
+
+  var tabs2=[{id:'screens',l:'Screens & RFCs'},{id:'middleware',l:'Middleware'},{id:'search',l:'Code Search'},{id:'diagnose',l:'Diagnose'},{id:'deploy',l:'Build & Deploy'}];
+  var screens=(registry&&registry.screens)||[];
+  var handlers=(registry&&registry.handlers)||[];
+  var filteredScreens=filter==='all'?screens:screens.filter(s=>s.module===filter);
+  var modules=[...new Set(screens.map(s=>s.module))];
+
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100%'}},
-    React.createElement('div',{style:{display:'flex',gap:0,borderBottom:'1px solid var(--border)',marginBottom:12}},tabs2.map(function(t){return React.createElement('button',{key:t.id,onClick:function(){setTab2(t.id)},style:{padding:'8px 16px',fontSize:13,fontWeight:tab2===t.id?600:400,color:tab2===t.id?'var(--blue)':'var(--fg3)',borderBottom:tab2===t.id?'2px solid var(--blue)':'2px solid transparent',background:'transparent',cursor:'pointer'}},t.l)})),
-    tab2==='status'&&React.createElement('div',{style:{overflow:'auto'}},
-      status?React.createElement('div',null,
-        React.createElement('div',{style:{display:'flex',gap:16,marginBottom:16}},
-          React.createElement('div',{className:'card',style:{flex:1,padding:16}},React.createElement('div',{style:{fontSize:12,color:'var(--fg3)'}},'Current Version'),React.createElement('div',{style:{fontSize:20,fontWeight:700,color:'var(--green)'}},status.version)),
-          React.createElement('div',{className:'card',style:{flex:1,padding:16}},React.createElement('div',{style:{fontSize:12,color:'var(--fg3)'}},'APK Size'),React.createElement('div',{style:{fontSize:20,fontWeight:700}},status.apk_mb+'MB')),
-          React.createElement('div',{className:'card',style:{flex:1,padding:16}},React.createElement('div',{style:{fontSize:12,color:'var(--fg3)'}},'Download'),React.createElement('a',{href:'https://apk.v2retail.net/download',target:'_blank',style:{fontSize:13,color:'var(--blue)'}},'apk.v2retail.net'))),
-        React.createElement('div',{style:{fontSize:13,fontWeight:600,marginBottom:8}},'Recent Builds'),
-        (status.builds||[]).map(function(b,i){return React.createElement('div',{key:i,style:{display:'flex',gap:8,padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:12}},
+    React.createElement('div',{style:{display:'flex',gap:0,borderBottom:'1px solid var(--border)',flexShrink:0}},tabs2.map(t=>React.createElement('button',{key:t.id,onClick:()=>setTab2(t.id),style:{padding:'8px 16px',fontSize:12,fontWeight:tab2===t.id?600:400,color:tab2===t.id?'var(--blue)':'var(--fg3)',borderBottom:tab2===t.id?'2px solid var(--blue)':'2px solid transparent',background:'transparent',cursor:'pointer'}},t.l))),
+
+    React.createElement('div',{style:{flex:1,overflow:'auto',padding:'12px 0'}},
+
+      tab2==='screens'&&React.createElement('div',null,
+        React.createElement('div',{style:{display:'flex',gap:12,marginBottom:12,flexWrap:'wrap'}},
+          React.createElement('div',{style:{display:'flex',gap:16}},
+            React.createElement('div',{className:'card',style:{padding:'10px 16px',textAlign:'center'}},React.createElement('div',{style:{fontSize:18,fontWeight:700}},registry?registry.total_screens:'—'),React.createElement('div',{style:{fontSize:10,color:'var(--fg3)'}},'Screens')),
+            React.createElement('div',{className:'card',style:{padding:'10px 16px',textAlign:'center'}},React.createElement('div',{style:{fontSize:18,fontWeight:700}},registry?registry.total_rfcs:'—'),React.createElement('div',{style:{fontSize:10,color:'var(--fg3)'}},'RFCs')),
+            React.createElement('div',{className:'card',style:{padding:'10px 16px',textAlign:'center'}},React.createElement('div',{style:{fontSize:18,fontWeight:700}},registry?registry.total_handlers:'—'),React.createElement('div',{style:{fontSize:10,color:'var(--fg3)'}},'Handlers')),
+            status&&React.createElement('div',{className:'card',style:{padding:'10px 16px',textAlign:'center'}},React.createElement('div',{style:{fontSize:14,fontWeight:700,color:'var(--green)'}},status.version||'?'),React.createElement('div',{style:{fontSize:10,color:'var(--fg3)'}},'Version'))),
+          React.createElement('div',{style:{display:'flex',gap:4,alignItems:'center',marginLeft:'auto'}},
+            React.createElement('button',{onClick:()=>setFilter('all'),className:filter==='all'?'bp':'bs',style:{fontSize:10,padding:'4px 8px'}},'All'),
+            modules.map(m=>React.createElement('button',{key:m,onClick:()=>setFilter(m),className:filter===m?'bp':'bs',style:{fontSize:10,padding:'4px 8px'}},m.toUpperCase())))),
+        React.createElement('div',{style:{fontSize:11,color:'var(--fg3)',marginBottom:8}},'Click a screen to load its source code for diagnosis'),
+        React.createElement('table',{style:{width:'100%',fontSize:11,borderCollapse:'collapse'}},
+          React.createElement('thead',null,React.createElement('tr',{style:{borderBottom:'1px solid var(--border)'}},
+            React.createElement('th',{style:{textAlign:'left',padding:'6px 8px',color:'var(--fg3)',fontWeight:600}},'Screen'),
+            React.createElement('th',{style:{textAlign:'left',padding:'6px 8px',color:'var(--fg3)',fontWeight:600}},'Module'),
+            React.createElement('th',{style:{textAlign:'left',padding:'6px 8px',color:'var(--fg3)',fontWeight:600}},'RFCs'),
+            React.createElement('th',{style:{textAlign:'right',padding:'6px 8px',color:'var(--fg3)',fontWeight:600}},'Lines'))),
+          React.createElement('tbody',null,filteredScreens.map((s,i)=>React.createElement('tr',{key:i,style:{borderBottom:'1px solid var(--border)',cursor:'pointer',background:fileName===s.path?'var(--sel)':'transparent'},onClick:()=>{readFile(s.path)}},
+            React.createElement('td',{style:{padding:'6px 8px',fontWeight:500,color:'var(--blue)'}},s.name),
+            React.createElement('td',{style:{padding:'6px 8px'}},React.createElement('span',{style:{fontSize:9,padding:'2px 6px',borderRadius:4,background:s.module==='dc'?'rgba(59,130,246,.15)':s.module==='store'?'rgba(16,185,129,.15)':'rgba(245,158,11,.15)',color:s.module==='dc'?'var(--blue)':s.module==='store'?'var(--green)':'var(--amber)'}},s.module)),
+            React.createElement('td',{style:{padding:'6px 8px',fontSize:10,color:'var(--fg2)'}},s.rfcs.join(', ')),
+            React.createElement('td',{style:{padding:'6px 8px',textAlign:'right',color:'var(--fg3)'}},s.lines)))))),
+
+      tab2==='middleware'&&React.createElement('div',null,
+        React.createElement('div',{style:{fontSize:12,fontWeight:600,marginBottom:8}},handlers.length+' Middleware Handler Mappings'),
+        React.createElement('div',{style:{fontSize:11,color:'var(--fg3)',marginBottom:12}},'Opcode → Handler class in v2-hht-middleware. Each handler connects to SAP via NCo (PROD or QA destination).'),
+        React.createElement('table',{style:{width:'100%',fontSize:11,borderCollapse:'collapse'}},
+          React.createElement('thead',null,React.createElement('tr',{style:{borderBottom:'1px solid var(--border)'}},
+            React.createElement('th',{style:{textAlign:'left',padding:'6px 8px',color:'var(--fg3)'}},'Opcode (from HHT app)'),
+            React.createElement('th',{style:{textAlign:'left',padding:'6px 8px',color:'var(--fg3)'}},'Handler Class'),
+            React.createElement('th',{style:{textAlign:'left',padding:'6px 8px',color:'var(--fg3)'}},'SAP Connection'))),
+          React.createElement('tbody',null,handlers.map((h,i)=>React.createElement('tr',{key:i,style:{borderBottom:'1px solid var(--border)'}},
+            React.createElement('td',{style:{padding:'5px 8px',fontFamily:'var(--mono)',fontWeight:500,color:'var(--blue)'}},h.opcode),
+            React.createElement('td',{style:{padding:'5px 8px',fontFamily:'var(--mono)',color:'var(--fg2)'}},h.handler),
+            React.createElement('td',{style:{padding:'5px 8px',fontSize:10,color:'var(--fg3)'}},'_qa ? QA() : Prod()')))))),
+
+      tab2==='search'&&React.createElement('div',null,
+        React.createElement('div',{className:'toolbar'},
+          React.createElement('input',{value:searchQ,onChange:e=>setSearchQ(e.target.value),placeholder:'Search HHT code: IM_STOCK_TAKE_ID, FragmentMSA, ZWM_STK...',style:{flex:1},onKeyDown:e=>{if(e.key==='Enter')searchCode()}}),
+          React.createElement('button',{className:'bp',onClick:searchCode,disabled:loading},'Search')),
+        searchR.length>0&&React.createElement('div',{style:{marginTop:8}},searchR.map((r,i)=>React.createElement('div',{key:i,onClick:()=>readFile(r.file),style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',cursor:'pointer',fontSize:11,color:'var(--blue)'}},r.file))),
+        fileContent&&React.createElement('div',{style:{marginTop:8}},
+          React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}},
+            React.createElement('span',{style:{fontSize:11,fontWeight:600,color:'var(--fg3)'}},fileName),
+            React.createElement('button',{className:'bs',onClick:()=>{setTab2('diagnose')},style:{fontSize:10}},'Diagnose this file')),
+          React.createElement('pre',{className:'code',style:{fontSize:10,maxHeight:500,overflow:'auto'}},fileContent.substring(0,8000)))),
+
+      tab2==='diagnose'&&React.createElement('div',null,
+        React.createElement('div',{style:{fontSize:12,fontWeight:600,marginBottom:8}},'AI Bug Diagnosis'),
+        React.createElement('div',{style:{fontSize:11,color:'var(--fg3)',marginBottom:12}},'Describe a bug or issue. The AI has full context: all HHT screens, RFC mappings, middleware handlers, SAP tables, and incident history.'),
+        React.createElement('textarea',{value:issue,onChange:e=>setIssue(e.target.value),rows:3,style:{width:'100%',fontSize:12,marginBottom:8},placeholder:'e.g. ZWM_STK_ADJ_MSA_BIN returns empty data — stock take not working for store DH24'}),
+        fileName&&React.createElement('div',{style:{fontSize:10,color:'var(--fg4)',marginBottom:8,padding:'6px 8px',background:'var(--sel)',borderRadius:4}},'Context loaded: '+fileName+' ('+fileContent.length+' chars) — AI will read this source'),
+        React.createElement('button',{className:'bp',onClick:diagnose,disabled:loading,style:{marginBottom:12}},loading?'Diagnosing...':'Diagnose with AI'),
+        diagnosis&&React.createElement('div',{className:'fi',style:{lineHeight:1.7}},React.createElement(Fmt,{text:diagnosis}))),
+
+      tab2==='deploy'&&React.createElement('div',null,
+        React.createElement('div',{style:{display:'flex',gap:16,marginBottom:20}},
+          status&&React.createElement('div',{className:'card',style:{flex:1,padding:16}},
+            React.createElement('div',{style:{fontSize:12,color:'var(--fg3)'}},'Current Version'),
+            React.createElement('div',{style:{fontSize:18,fontWeight:700,color:'var(--green)'}},status.version||'?'),
+            React.createElement('div',{style:{fontSize:10,color:'var(--fg3)',marginTop:4}},status.date||'')),
+          React.createElement('div',{className:'card',style:{flex:1,padding:16}},
+            React.createElement('div',{style:{fontSize:12,color:'var(--fg3)'}},'Download'),
+            React.createElement('a',{href:'https://apk.v2retail.net/download',target:'_blank',style:{fontSize:14,fontWeight:600,color:'var(--blue)'}},'apk.v2retail.net'),
+            React.createElement('div',{style:{fontSize:10,color:'var(--fg3)',marginTop:4}},'R2 v2retail bucket')),
+          React.createElement('div',{className:'card',style:{flex:1,padding:16,textAlign:'center',cursor:'pointer'},onClick:deployApk},
+            React.createElement('div',{style:{fontSize:24}},'🚀'),
+            React.createElement('div',{style:{fontSize:12,fontWeight:600,marginTop:4}},'Deploy to Production'),
+            React.createElement('div',{style:{fontSize:10,color:'var(--fg3)',marginTop:2}},'GitHub → R2 → apk.v2retail.net'))),
+        React.createElement('div',{style:{fontSize:12,fontWeight:600,marginBottom:8}},'Recent Builds'),
+        status&&(status.builds||[]).map((b,i)=>React.createElement('div',{key:i,style:{display:'flex',gap:8,padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:11}},
           React.createElement('span',{style:{color:b.status==='success'?'var(--green)':b.status==='failure'?'var(--red)':'var(--amber)',fontWeight:700,width:70}},b.status||'running'),
           React.createElement('span',{style:{color:'var(--fg4)',width:130}},b.date),
-          React.createElement('span',{style:{flex:1,color:'var(--fg2)'}},b.msg.substring(0,60)))})
-      ):React.createElement('div',{style:{textAlign:'center',color:'var(--fg4)',marginTop:40}},'Loading HHT status...')),
-    tab2==='search'&&React.createElement('div',null,
-      React.createElement('div',{className:'toolbar'},
-        React.createElement('input',{value:searchQ,onChange:function(e){setSearchQ(e.target.value)},placeholder:'Search HHT code: e.g. IM_STOCK_TAKE_ID, STK_ADJ, FragmentMSA',style:{flex:1},onKeyDown:function(e){if(e.key==='Enter')searchCode()}}),
-        React.createElement('button',{className:'bp',onClick:searchCode,disabled:loading},'Search')),
-      searchR.length>0&&searchR.map(function(r,i){return React.createElement('div',{key:i,style:{display:'flex',gap:8,padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:12,cursor:'pointer'},onClick:function(){readFile(r.file)}},
-        React.createElement('span',{style:{color:'var(--blue)',flex:1}},r.file))}),
-      fileContent&&React.createElement('div',null,
-        React.createElement('div',{style:{fontSize:12,fontWeight:600,color:'var(--fg3)',margin:'8px 0'}},fileName),
-        React.createElement('pre',{className:'code',style:{fontSize:11,maxHeight:400,overflow:'auto'}},fileContent.substring(0,5000)))),
-    tab2==='diagnose'&&React.createElement('div',null,
-      React.createElement('div',{style:{marginBottom:8}},
-        React.createElement('div',{style:{fontSize:12,fontWeight:600,color:'var(--fg3)',marginBottom:4}},'Describe the bug or issue:'),
-        React.createElement('textarea',{value:issue,onChange:function(e){setIssue(e.target.value)},rows:3,style:{width:'100%',fontSize:12},placeholder:'e.g. Wrong value in RFC ZWM_STK_ADJ_MSA_BIN field IM_STOCK_TAKE_ID — HHT sends user ID instead of stock take ID'})),
-      fileName&&React.createElement('div',{style:{fontSize:11,color:'var(--fg4)',marginBottom:8}},'Context file loaded: '+fileName+' ('+fileContent.length+' chars)'),
-      React.createElement('button',{className:'bp',onClick:diagnose,disabled:loading,style:{marginBottom:12}},loading?'Diagnosing...':'Diagnose with AI'),
-      diagnosis&&React.createElement('div',{className:'fi',style:{lineHeight:1.7}},React.createElement(Fmt,{text:diagnosis}))),
-    tab2==='deploy'&&React.createElement('div',{style:{textAlign:'center',marginTop:40}},
-      React.createElement('div',{style:{fontSize:14,fontWeight:600,marginBottom:8}},'Deploy latest APK to apk.v2retail.net'),
-      React.createElement('div',{style:{fontSize:12,color:'var(--fg3)',marginBottom:20}},'Downloads the latest signed APK from GitHub releases and uploads to v2retail R2 bucket'),
-      React.createElement('button',{className:'bp',onClick:deployApk,disabled:loading,style:{fontSize:16,padding:'12px 32px'}},loading?'Deploying...':'Deploy APK to Production'),
-      React.createElement('div',{style:{fontSize:11,color:'var(--fg4)',marginTop:12}},'Current download: apk.v2retail.net/download')));
+          React.createElement('span',{style:{flex:1,color:'var(--fg2)'}},b.msg.substring(0,60)))))));
 }
 
 function App(){
