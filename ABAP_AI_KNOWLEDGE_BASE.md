@@ -193,3 +193,70 @@ When optimizing existing code:
 9. Never use deprecated ABAP syntax (MOVE, COMPUTE, old string operations)
 10. Never generate code longer than the original unless adding new features
 
+
+
+---
+
+## 8-STAGE PIPELINE (deployed 07-Apr-2026)
+
+```
+Stage 0: Interface Pre-fetch
+  → Reads actual FM parameters from FUPARAREF on SAP
+  → Passes exact param names + types to the Coder AI
+  → If FM doesn't exist, skips (new FM creation)
+
+Stage 1: Coder
+  → AI generates ABAP code using V2 KB + actual interface context
+  → System prompt: 1659 chars with anti-hallucination rules
+  → Must use EXACT parameter names from Stage 0
+
+Stage 2: Reviewer
+  → Independent AI rates the code /10
+  → Checks: quality, error handling, security, performance, naming
+
+Stage 3: Fixer (conditional)
+  → Only runs if review < 8/10
+  → Fixes ONLY the issues found by Reviewer
+  → Must keep ALL parameters identical
+
+Stage 4: Cross-verify
+  → Third independent AI check for correctness
+  → Catches issues Reviewer/Fixer cycle might miss
+
+Stage 5: Declaration Check ★ NEW
+  → Extracts Local Interface from generated code
+  → Compares every IMPORTING/EXPORTING/TABLES param with FUPARAREF
+  → Checks for hallucinated params (code declares VALUE(X) but X not in SE37)
+  → BLOCKS deploy if any mismatch found
+
+Stage 6: Syntax Test ★ NEW
+  → Deploys code to SAP DEV (inactive, $TMP)
+  → Calls the FM with empty parameters
+  → If SYNTAX_ERROR returned:
+    → Reads the error message
+    → Sends to SYNTAX FIXER AI agent
+    → Re-deploys the fixed code
+    → Re-tests
+    → If still fails → BLOCKS deploy permanently
+  → If no error → proceeds to final validation
+
+Stage 7: Interface Validator
+  → Final parameter name check
+  → Catches IV_ vs IM_ naming convention mismatches
+  → Catches EV_ vs EX_ convention mismatches
+  → BLOCKS deploy if any issue found
+```
+
+### What Gets Blocked (deploy prevented):
+1. Parameter name mismatch (IM_USER vs IV_USER)
+2. Missing parameter (code doesn't use a param defined in SE37)
+3. Hallucinated parameter (code uses a param NOT in SE37)
+4. Wrong naming convention (IV_/EV_ when FM uses IM_/EX_)
+5. Syntax error on SAP (even after auto-fix attempt)
+6. Review score < 8/10 without successful fix
+
+### Incident That Created These Safeguards:
+**07-Apr-2026**: AI generated code for ZWM_CRATE_IDENTIFIER_RFC with made-up parameters
+(IV_CRATE_NUMBER, EV_CRATE_ID) and a non-existent table (ZWM_CRATES). Code was deployed
+and activated, causing SYNTAX_ERROR dump. Root cause: system prompt was 1 sentence with
+no knowledge of V2's actual system. Fixed by adding comprehensive KB + 3 validation stages.
