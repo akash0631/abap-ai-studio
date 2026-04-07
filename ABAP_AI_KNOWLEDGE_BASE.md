@@ -260,3 +260,142 @@ Stage 7: Interface Validator
 (IV_CRATE_NUMBER, EV_CRATE_ID) and a non-existent table (ZWM_CRATES). Code was deployed
 and activated, causing SYNTAX_ERROR dump. Root cause: system prompt was 1 sentence with
 no knowledge of V2's actual system. Fixed by adding comprehensive KB + 3 validation stages.
+
+
+---
+
+## V2 RETAIL PRODUCTION KNOWLEDGE (from live analysis sessions)
+
+### Function Group → FM Mapping (VERIFIED on PROD)
+| FM | Function Group | Include | Timing |
+|-----|----------------|---------|--------|
+| ZWM_CREATE_HU_AND_ASSIGN_TVS | SAPLZWM_TVS | varies | 55s timeout |
+| ZSDC_DIRECT_ART_VAL_BARCOD_RFC | SAPLZSDC_DIRECT_FLR_RFC | varies | 55s timeout |
+| ZWM_RFC_GRT_PUTWAY_POST | SAPLZWM_GRT | varies | 55s timeout |
+| ZSDC_DIRECT_ART_VAL1_SAVE1_RFC | SAPLZSDC_DIRECT_FLR_RFC | varies | 55s timeout |
+| ZPTL_RETURN_CRATE_VALIDATE | SAPLZGRT_PICK | varies | 15s |
+| ZWM_CRATE_IDENTIFIER_RFC | SAPLZWM_BIN_CRATE_IDENTIFIER | U02 | 11s |
+| ZWM_PICKLIST_PPPN | SAPLZWM_BIN_PUT1 | varies | 11s |
+| ZWM_CREATE_HU_AND_ASSIGN | SAPLZWM_RFC | varies | 9s |
+| ZWM_TO_CREATE_FROM_GR_DATA | SAPLZWM_RFC | varies | 4s |
+
+**CRITICAL:** An FM name does NOT always match its function group name! 
+Example: ZWM_CRATE_IDENTIFIER_RFC lives in FG ZWM_BIN_CRATE_IDENTIFIER (not ZWM_CRATE_IDENTIFIER).
+Always look up TFDIR.PNAME to find the correct function group.
+
+### Production Database Issues (CONFIRMED)
+- **ZSDC_FLRMSTR**: PK is MANDT,WERKS,LGNUM,LGTYP,LGPLA,MAJ_CAT_CD but JOINs use WERKS+LGPLA+MAJ_CAT_CD (skips LGNUM,LGTYP). NO secondary indexes → FULL TABLE SCAN.
+  - FIX: CREATE INDEX Z01 ON ZSDC_FLRMSTR (WERKS, LGPLA, MAJ_CAT_CD)
+- **ZWM_GRT_PUTWAY**: CRATE is 4th key field, MBLNR/TANUM not key fields. NO secondary index.
+  - FIX: CREATE INDEX Z01 ON ZWM_GRT_PUTWAY (CRATE, MBLNR, TANUM)
+- LQUA: Has indexes HJ4,HKV,HW6,M,P ✅
+- ZDISC_ARTL: PK matches JOIN perfectly ✅
+
+### Production Anti-Patterns Found
+| Program | Issue | Line |
+|---------|-------|------|
+| LZWM_GRTF01 | SELECT * (2 occurrences) | L173, L330 |
+| LZWM_GRTU01 | SELECT SINGLE in LOOP | L74 |
+| ZWM_CRATE_GRT_REP_F01 | WAIT UP TO 5 SECONDS | L216 |
+| F_CLEAR_V04_FROM_MSA_BIN | BAPI_GOODSMVT_CREATE + COMMIT inside nested LOOP | — |
+
+### SAP Connectivity Notes
+- PROD SAP: Host=HANACIFO, SysID=S4P, Client 600
+- DEV SAP: Often goes down — always try PROD fallback
+- IIS App Pool V2RfcTestPool on .36 needs recycling when SAP restarts
+- RFC proxy: sap-api.v2retail.net/api/rfc/proxy (DEV default, ?env=prod for PROD)
+- Many FMs exist ONLY on PROD (transported directly, never backported to DEV)
+
+### Deploy Mechanism
+- `Z_UPLOAD_PROGRAM` or `/api/abapstudio/deploy` writes to $TMP
+- After deploy, program needs **activation** in SE80 (Ctrl+F3)
+- Include name format: L<FG_NAME>U<NUMBER> (e.g., LZWM_BIN_CRATE_IDENTIFIERU02)
+- Always look up include number from TFDIR.INCLUDE field
+
+### 50+ Aborted Jobs on PROD (as of Apr 2026)
+- /AIF/ODATA_TRANSFER_TECH_JOB — daily failure
+- /SDF/MON_SCHEDULER — daily failure
+- These are monitored via Job Monitor tab in ABAP AI Studio
+
+---
+
+## OPTIMIZATION PATTERNS (proven effective on V2 code)
+
+### Pattern 1: Replace SELECT * with specific fields
+```abap
+" BEFORE (bad):
+SELECT * FROM ZSDC_FLRMSTR INTO TABLE @DATA(lt_floor)
+  WHERE WERKS = @im_plant.
+
+" AFTER (good):
+SELECT WERKS, LGPLA, MAJ_CAT_CD, FLOOR, DIVISION
+  FROM ZSDC_FLRMSTR INTO TABLE @DATA(lt_floor)
+  WHERE WERKS = @im_plant.
+```
+
+### Pattern 2: Move SELECT SINGLE out of LOOP
+```abap
+" BEFORE (bad):
+LOOP AT lt_crates INTO DATA(ls_crate).
+  SELECT SINGLE LGPLA FROM ZWM_CRATE INTO @DATA(lv_lgpla)
+    WHERE CRATE = @ls_crate-crate.
+ENDLOOP.
+
+" AFTER (good):
+SELECT CRATE, LGPLA FROM ZWM_CRATE
+  INTO TABLE @DATA(lt_crate_bins)
+  FOR ALL ENTRIES IN @lt_crates
+  WHERE CRATE = @lt_crates-crate.
+SORT lt_crate_bins BY crate.
+LOOP AT lt_crates INTO DATA(ls_crate).
+  READ TABLE lt_crate_bins INTO DATA(ls_bin)
+    WITH KEY crate = ls_crate-crate BINARY SEARCH.
+ENDLOOP.
+```
+
+### Pattern 3: Remove COMMIT WORK from LOOP
+```abap
+" BEFORE (bad — causes lock contention):
+LOOP AT lt_items INTO DATA(ls_item).
+  CALL FUNCTION 'BAPI_GOODSMVT_CREATE'...
+  COMMIT WORK.
+ENDLOOP.
+
+" AFTER (good — single commit):
+LOOP AT lt_items INTO DATA(ls_item).
+  CALL FUNCTION 'BAPI_GOODSMVT_CREATE'...
+ENDLOOP.
+COMMIT WORK.
+```
+
+### Pattern 4: Replace WAIT UP TO
+```abap
+" BEFORE (bad):
+WAIT UP TO 5 SECONDS.
+
+" AFTER: Remove entirely — WAIT is never needed in RFC context
+" If waiting for lock: use ENQUEUE/DEQUEUE with retry
+" If waiting for async: restructure to callback pattern
+```
+
+---
+
+## ALL 151 RFCs ANALYZED — STATUS TRACKING
+
+### Critical (5 RFCs — all 55s timeout)
+| RFC | Status | Root Cause |
+|-----|--------|------------|
+| ZWM_CREATE_HU_AND_ASSIGN_TVS | Code saved on GitHub | Lock contention + missing index |
+| ZSDC_DIRECT_ART_VAL_BARCOD_RFC | Code saved on GitHub | 5-table JOIN, missing index on ZSDC_FLRMSTR |
+| ZWM_RFC_GRT_PUTWAY_POST | Code saved on GitHub | BAPI+COMMIT in nested loop, missing index on ZWM_GRT_PUTWAY |
+| ZSDC_DIRECT_ART_VAL1_SAVE1_RFC | Code saved on GitHub | Same FG as BARCOD_RFC |
+| NOACL | System error | Not an RFC — SM58 configuration issue |
+
+### High Priority (35 RFCs)
+- 9 already analyzed (code on GitHub)
+- 26 remaining — need source read + optimization
+
+### Incident Log
+| Date | RFC | Issue | Root Cause | Fix |
+|------|-----|-------|------------|-----|
+| 07-Apr-2026 | ZWM_CRATE_IDENTIFIER_RFC | SYNTAX_ERROR dump | AI hallucinated params (IV_CRATE_NUMBER, ZWM_CRATES table) | Restored original code, added 8-stage safety pipeline |
