@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>V2 Retail — Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0e17;--card:#111827;--card2:#1a2332;--border:#1e293b;--fg:#f1f5f9;--fg2:#94a3b8;--fg3:#64748b;--blue:#3b82f6;--green:#10b981;--amber:#f59e0b;--red:#ef4444;--purple:#8b5cf6;--cyan:#06b6d4;--pink:#ec4899}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'DM Sans',sans-serif;min-height:100vh;overflow-x:hidden}
+.mono{font-family:'JetBrains Mono',monospace}
+
+/* Header */
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);background:rgba(17,24,39,.8);backdrop-filter:blur(12px);position:sticky;top:0;z-index:100}
+.hdr-l{display:flex;align-items:center;gap:12px}
+.logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#1B4F72,#3b82f6);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;font-family:'JetBrains Mono'}
+.hdr-t{font-weight:700;font-size:16px;letter-spacing:-.02em}
+.hdr-s{font-size:10px;color:var(--fg3);font-family:'JetBrains Mono'}
+.hdr-r{display:flex;gap:8px}
+.hdr-btn{font-family:'JetBrains Mono';font-size:10px;padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--fg2);cursor:pointer;text-decoration:none;transition:.15s}
+.hdr-btn:hover{border-color:var(--blue);color:var(--blue)}
+
+/* Main */
+.main{max-width:1400px;margin:0 auto;padding:24px}
+
+/* Flow Diagram */
+.flow-section{margin-bottom:32px}
+.section-title{font-size:11px;font-weight:700;color:var(--fg3);letter-spacing:.1em;margin-bottom:14px;font-family:'JetBrains Mono'}
+.flow{display:flex;align-items:center;gap:0;overflow-x:auto;padding:12px 0}
+.flow-step{display:flex;flex-direction:column;align-items:center;min-width:140px;position:relative}
+.flow-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:8px;border:2px solid var(--border);transition:.2s}
+.flow-step:hover .flow-icon{transform:scale(1.1);border-color:var(--blue)}
+.flow-label{font-size:11px;font-weight:600;text-align:center}
+.flow-sub{font-size:9px;color:var(--fg3);text-align:center;margin-top:2px;font-family:'JetBrains Mono'}
+.flow-arrow{font-size:16px;color:var(--fg3);margin:0 -4px;flex-shrink:0;margin-bottom:20px}
+.fi-blue{background:rgba(59,130,246,.15);border-color:rgba(59,130,246,.3)}
+.fi-green{background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.3)}
+.fi-purple{background:rgba(139,92,246,.15);border-color:rgba(139,92,246,.3)}
+.fi-amber{background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3)}
+.fi-cyan{background:rgba(6,182,212,.15);border-color:rgba(6,182,212,.3)}
+.fi-pink{background:rgba(236,72,153,.15);border-color:rgba(236,72,153,.3)}
+
+/* System Cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:32px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;cursor:pointer;transition:.2s;text-decoration:none;color:inherit;display:block;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--blue);opacity:0;transition:.2s}
+.card:hover{border-color:var(--blue);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.card:hover::before{opacity:1}
+.card-top{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.card-icon{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.card-name{font-weight:600;font-size:13px}
+.card-domain{font-size:10px;color:var(--fg3);font-family:'JetBrains Mono'}
+.card-desc{font-size:11px;color:var(--fg2);line-height:1.5;margin-bottom:12px}
+.card-status{display:flex;align-items:center;gap:6px;font-size:10px;font-family:'JetBrains Mono'}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-green{background:var(--green);box-shadow:0 0 8px rgba(16,185,129,.5)}
+.dot-amber{background:var(--amber)}
+.dot-red{background:var(--red)}
+.dot-gray{background:var(--fg3)}
+
+/* Knowledge Section */
+.kb-section{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:32px}
+.kb-title{font-size:14px;font-weight:700;margin-bottom:4px}
+.kb-sub{font-size:11px;color:var(--fg3);margin-bottom:16px}
+.kb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.kb-item{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11px;transition:.15s}
+.kb-item:hover{border-color:var(--purple)}
+.kb-item-t{font-weight:600;margin-bottom:4px;color:var(--fg)}
+.kb-item-d{color:var(--fg3);font-size:10px;line-height:1.4}
+
+/* Stats Bar */
+.stats{display:flex;gap:14px;margin-bottom:24px;flex-wrap:wrap}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 18px;min-width:120px;flex:1}
+.stat-val{font-size:22px;font-weight:700;font-family:'JetBrains Mono'}
+.stat-lbl{font-size:10px;color:var(--fg3);margin-top:2px}
+
+/* Responsive */
+@media(max-width:768px){.flow{flex-wrap:wrap;gap:8px}.cards{grid-template-columns:1fr}.stats{flex-direction:column}}
+
+/* Pulse animation */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.loading{animation:pulse 1.2s infinite}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-l">
+    <div class="logo">V2</div>
+    <div>
+      <div class="hdr-t">V2 Retail — Command Center</div>
+      <div class="hdr-s">320+ stores · S4/HANA · All systems connected</div>
+    </div>
+  </div>
+  <div class="hdr-r">
+    <a href="https://abap.v2retail.net" class="hdr-btn" target="_blank">ABAP Studio</a>
+    <a href="https://hht.v2retail.net" class="hdr-btn" target="_blank">HHT Fleet</a>
+    <a href="https://apk.v2retail.net" class="hdr-btn" target="_blank">APK</a>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Stats Bar -->
+  <div class="stats" id="stats">
+    <div class="stat"><div class="stat-val" id="s-stores">320+</div><div class="stat-lbl">Retail Stores</div></div>
+    <div class="stat"><div class="stat-val" id="s-rfcs">154</div><div class="stat-lbl">SAP RFCs</div></div>
+    <div class="stat"><div class="stat-val" id="s-workers">33</div><div class="stat-lbl">CF Workers</div></div>
+    <div class="stat"><div class="stat-val" id="s-repos">7</div><div class="stat-lbl">GitHub Repos</div></div>
+    <div class="stat"><div class="stat-val" id="s-ver loading">—</div><div class="stat-lbl">HHT Version</div></div>
+    <div class="stat"><div class="stat-val" id="s-devices loading">—</div><div class="stat-lbl">Devices Online</div></div>
+  </div>
+
+  <!-- The Full Flow -->
+  <div class="flow-section">
+    <div class="section-title">THE FULL FLOW — END TO END</div>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="flow-icon fi-pink">📋</div>
+        <div class="flow-label">Business Req</div>
+        <div class="flow-sub">Requirement Doc</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <a href="https://abap.v2retail.net" target="_blank" style="text-decoration:none;color:inherit">
+        <div class="flow-icon fi-blue">🧠</div>
+        <div class="flow-label">ABAP AI Studio</div>
+        <div class="flow-sub">8-stage pipeline</div>
+        </a>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-icon fi-green">⚡</div>
+        <div class="flow-label">SAP S4/HANA</div>
+        <div class="flow-sub">Tables · RFCs · FMs</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <a href="https://sap-api.v2retail.net/swagger" target="_blank" style="text-decoration:none;color:inherit">
+        <div class="flow-icon fi-purple">🔌</div>
+        <div class="flow-label">RFC API</div>
+        <div class="flow-sub">sap-api.v2retail.net</div>
+        </a>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-icon fi-amber">🗄️</div>
+        <div class="flow-label">SQL Server</div>
+        <div class="flow-sub">Data warehouse</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-icon fi-cyan">📡</div>
+        <div class="flow-label">Data API</div>
+        <div class="flow-sub">REST endpoints</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <a href="https://apk.v2retail.net" target="_blank" style="text-decoration:none;color:inherit">
+        <div class="flow-icon fi-pink">📱</div>
+        <div class="flow-label">Applications</div>
+        <div class="flow-sub">HHT · Hub · Dashboards</div>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Cards -->
+  <div class="section-title">ALL SYSTEMS</div>
+  <div class="cards" id="cards">
+    <!-- SAP & Development -->
+    <a class="card" href="https://abap.v2retail.net" target="_blank">
+      <div class="card-top"><div class="card-icon fi-blue">🧠</div><div><div class="card-name">ABAP AI Studio</div><div class="card-domain">abap.v2retail.net</div></div></div>
+      <div class="card-desc">AI-powered SAP development. 17 tools: Agent Pipeline, Smart Debugger, RFC Tester, Code Scanner, HHT Studio. 8-stage anti-hallucination pipeline.</div>
+      <div class="card-status"><div class="dot dot-green"></div><span id="cs-abap">Checking...</span></div>
+    </a>
+
+    <a class="card" href="https://sap-api.v2retail.net/swagger" target="_blank">
+      <div class="card-top"><div class="card-icon fi-purple">🔌</div><div><div class="card-name">RFC API / Swagger</div><div class="card-domain">sap-api.v2retail.net</div></div></div>
+      <div class="card-desc">148 .NET controllers wrapping SAP RFCs as REST APIs. IIS on Server .36 → SAP via NCo connector. Supports DEV/QA/PROD routing.</div>
+      <div class="card-status"><div class="dot dot-green"></div><span id="cs-rfc">Checking...</span></div>
+    </a>
+
+    <a class="card" href="https://hht.v2retail.net" target="_blank">
+      <div class="card-top"><div class="card-icon fi-green">📊</div><div><div class="card-name">HHT Fleet Dashboard</div><div class="card-domain">hht.v2retail.net</div></div></div>
+      <div class="card-desc">Real-time monitoring of 1000+ Zebra handheld devices across 320+ stores. Live RFC feed, device sessions, cache stats.</div>
+      <div class="card-status"><div class="dot dot-green"></div><span id="cs-hht">Checking...</span></div>
+    </a>
+
+    <a class="card" href="https://apk.v2retail.net" target="_blank">
+      <div class="card-top"><div class="card-icon fi-amber">📱</div><div><div class="card-name">HHT APK Download</div><div class="card-domain">apk.v2retail.net</div></div></div>
+      <div class="card-desc">Signed Android APK for Zebra devices. QR scan install. Auto-build from GitHub → R2 CDN. Current version shown live.</div>
+      <div class="card-status"><div class="dot dot-green"></div><span id="cs-apk">Checking...</span></div>
+    </a>
+
+    <a class="card" href="https://v2-hht-api.azurewebsites.net/api/hht/health" target="_blank">
+      <div class="card-top"><div class="card-icon fi-cyan">☁️</div><div><div class="card-name">Azure HHT Middleware</div><div class="card-domain">v2-hht-api.azurewebsites.net</div></div></div>
+      <div class="card-desc">Azure App Service running .NET middleware. SAP NCo via Hybrid Connection tunnel. PROD + QA destinations. Session tracking.</div>
+      <div class="card-status"><div class="dot dot-green"></div><span id="cs-azure">Checking...</span></div>
+    </a>
+
+    <a class="card" href="https://articles.v2retail.net" target="_blank">
+      <div class="card-top"><div class="card-icon fi-pink">🏷️</div><div><div class="card-name">Article Creation</div><div class="card-domain">articles.v2retail.net</div></div></div>
+      <div class="card-desc">Article master data creation tool. Create new retail articles with all SAP master data fields.</div>
+      <div class="card-status"><div class="dot dot-green"></div><span>Active</span></div>
+    </a>
+  </div>
+
+  <!-- Knowledge Base -->
+  <div class="kb-section">
+    <div class="kb-title">🧠 Master Knowledge Base</div>
+    <div class="kb-sub">Everything the AI knows — saved across all repos on GitHub. Powers ABAP Studio AI Chat, Agent Pipeline, and HHT Diagnose.</div>
+    <div class="kb-grid">
+      <div class="kb-item"><div class="kb-item-t">SAP Landscape</div><div class="kb-item-d">DEV (.174/210) · QA (.179/600) · PROD (.170/600 HANACIFO). IIS .36 bridge. Azure Hybrid Connection.</div></div>
+      <div class="kb-item"><div class="kb-item-t">Verified Tables</div><div class="kb-item-d">ZWM_USR02, ZWM_CRATE, ZWM_DCSTK1/2/3, ZSDC_FLRMSTR, ZWM_DC_MASTER, ZWM_GRT_PUTWAY + all standard.</div></div>
+      <div class="kb-item"><div class="kb-item-t">Naming Rules</div><div class="kb-item-d">IM_ (import), EX_ (export), IT_/ET_ (tables). NEVER IV_/EV_. Return: EX_RETURN TYPE BAPIRET2.</div></div>
+      <div class="kb-item"><div class="kb-item-t">Anti-Hallucination</div><div class="kb-item-d">8-stage pipeline: Pre-fetch → Coder → Reviewer → Fixer → Cross-verify → Declaration → Syntax → Validator.</div></div>
+      <div class="kb-item"><div class="kb-item-t">Build Rules</div><div class="kb-item-d">NEVER regex on HTML_B64. dev→main. index.js filename. Tokens in env secrets. APK→v2retail R2 bucket.</div></div>
+      <div class="kb-item"><div class="kb-item-t">Incidents</div><div class="kb-item-d">ZWM_CRATE_IDENTIFIER_RFC hallucination. HHT IM_STOCK_TAKE_ID bug. Blank page regex crash. All resolved.</div></div>
+      <div class="kb-item"><div class="kb-item-t">GitHub Repos</div><div class="kb-item-d">rfc-api (148 controllers) · abap-ai-studio (CF Worker) · v2-android-hht (APK) · v2-hht-middleware (Azure).</div></div>
+      <div class="kb-item"><div class="kb-item-t">RFC Optimization</div><div class="kb-item-d">154 total RFCs. 5 critical (55s timeout). 35 high priority. Missing indexes on ZSDC_FLRMSTR, ZWM_GRT_PUTWAY.</div></div>
+    </div>
+  </div>
+
+  <!-- GitHub Repos -->
+  <div class="section-title">GITHUB REPOSITORIES</div>
+  <div class="cards" style="margin-bottom:32px">
+    <a class="card" href="https://github.com/akash0631/rfc-api" target="_blank" style="--accent:var(--green)">
+      <div class="card-top"><div class="card-icon fi-green">📦</div><div><div class="card-name">rfc-api</div><div class="card-domain">148 .NET Controllers · IIS Server .36</div></div></div>
+      <div class="card-desc">SAP RFC → REST API bridge. Each controller wraps one RFC with typed model. Swagger auto-gen. Deploy via deploy-iis.yml.</div>
+    </a>
+    <a class="card" href="https://github.com/akash0631/abap-ai-studio" target="_blank">
+      <div class="card-top"><div class="card-icon fi-blue">🧠</div><div><div class="card-name">abap-ai-studio</div><div class="card-domain">CF Worker + React SPA · main=prod, dev=dev</div></div></div>
+      <div class="card-desc">Full ABAP development studio with 17 features. D1 database for users. Claude API for AI. String find/replace build.</div>
+    </a>
+    <a class="card" href="https://github.com/akash0631/v2-android-hht" target="_blank">
+      <div class="card-top"><div class="card-icon fi-amber">📱</div><div><div class="card-name">v2-android-hht</div><div class="card-domain">Java/Android · APK → R2 → apk.v2retail.net</div></div></div>
+      <div class="card-desc">HHT Android app for Zebra TC-series. Gradle signed build. GitHub Actions → R2 deploy. 950+ lines per Fragment.</div>
+    </a>
+    <a class="card" href="https://github.com/akash0631/v2-hht-middleware" target="_blank">
+      <div class="card-top"><div class="card-icon fi-cyan">☁️</div><div><div class="card-name">v2-hht-middleware</div><div class="card-domain">C# .NET · Azure App Service</div></div></div>
+      <div class="card-desc">Replaces legacy Tomcat xmwgw. SAP NCo via Hybrid Connection. Session tracking. PROD + QA SAP destinations.</div>
+    </a>
+  </div>
+
+</div>
+
+<script>
+// Health checks
+async function checkHealth() {
+  var checks = [
+    {id:'cs-abap', url:'https://abap.v2retail.net/', label:'ABAP Studio'},
+    {id:'cs-rfc',  url:'https://sap-api.v2retail.net/swagger', label:'RFC API'},
+    {id:'cs-hht',  url:'https://hht.v2retail.net/', label:'HHT Dashboard'},
+    {id:'cs-apk',  url:'https://apk.v2retail.net/', label:'APK Page'},
+    {id:'cs-azure',url:'https://v2-hht-api.azurewebsites.net/api/hht/ping', label:'Azure MW'}
+  ];
+  for (var c of checks) {
+    try {
+      var t0 = Date.now();
+      var r = await fetch(c.url, {mode:'no-cors',cache:'no-store'});
+      var ms = Date.now() - t0;
+      var el = document.getElementById(c.id);
+      if (el) {
+        el.textContent = 'Online · ' + ms + 'ms';
+        el.previousElementSibling.className = 'dot dot-green';
+      }
+    } catch(e) {
+      var el = document.getElementById(c.id);
+      if (el) {
+        el.textContent = 'Unreachable';
+        el.previousElementSibling.className = 'dot dot-red';
+      }
+    }
+  }
+}
+
+// Fetch HHT data
+async function fetchHHTData() {
+  try {
+    var r = await fetch('https://v2-hht-api.azurewebsites.net/api/hht/appversion');
+    var d = await r.json();
+    if (d.version) document.getElementById('s-ver').textContent = 'v' + d.version;
+    document.getElementById('s-ver').classList.remove('loading');
+  } catch(e) {
+    document.getElementById('s-ver').textContent = '—';
+    document.getElementById('s-ver').classList.remove('loading');
+  }
+  try {
+    var r2 = await fetch('https://v2-hht-api.azurewebsites.net/api/hht/sessions');
+    var d2 = await r2.json();
+    document.getElementById('s-devices').textContent = (d2.device_count_live || d2.total || 0);
+    document.getElementById('s-devices').classList.remove('loading');
+  } catch(e) {
+    document.getElementById('s-devices').textContent = '—';
+    document.getElementById('s-devices').classList.remove('loading');
+  }
+}
+
+checkHealth();
+fetchHHTData();
+setInterval(checkHealth, 60000);
+setInterval(fetchHHTData, 30000);
+</script>
+</body>
+</html>
