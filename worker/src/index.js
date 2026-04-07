@@ -1173,22 +1173,128 @@ export default {
 
             // Final result
             centralPipelineRun('abap-pipeline',crossRating>=6?'success':'failed',{requirement:requirement.substring(0,200)},{rating:rating,cross_rating:crossRating},Date.now()-Date.now()).catch(function(){});
-            // Stage 5: Interface Validator — blocks deploy if parameters don't match SE37
+            // Stage 5: Declaration Check — verify Local Interface matches FUPARAREF
             if(existingInterface){
-              await send({stage:5,name:'Interface Validator',status:'running',message:'Verifying parameters match SE37 definition...'});
+              await send({stage:5,name:'Declaration Check',status:'running',message:'Comparing Local Interface with SE37 definition...'});
+              var declErrors=[];
+              var localInterface=finalCode.match(/\*\"\s*(IMPORTING|EXPORTING|TABLES|CHANGING)[\s\S]*?\*\"---/);
+              if(localInterface){
+                var localText=localInterface[0];
+                var ifLines=existingInterface.split('\n').filter(function(l){return l.trim()});
+                ifLines.forEach(function(il){
+                  var parts=il.trim().split(/\s+/);
+                  var pType=parts[0]||'';
+                  var pName=parts[1]||'';
+                  var pStruct=parts[3]||parts[2]||'';
+                  if(pName&&localText.indexOf(pName)<0){
+                    declErrors.push('SE37 has '+pType+' '+pName+' but missing in generated Local Interface');
+                  }
+                });
+                var codeParams=finalCode.match(/VALUE\(([A-Z_]+)\)/g)||[];
+                codeParams.forEach(function(cp){
+                  var pn=cp.replace('VALUE(','').replace(')','');
+                  if(existingInterface.indexOf(pn)<0&&pn!=='IV_PROGRAM'&&pn!=='IT_SOURCE'){
+                    declErrors.push('Code declares '+pn+' but it does NOT exist in SE37 — HALLUCINATION');
+                  }
+                });
+              }
+              if(declErrors.length>0){
+                await send({stage:5,name:'Declaration Check',status:'failed',message:declErrors.join('; ')});
+                await send({stage:'done',final_code:finalCode,blocked:true,block_reason:'Declaration mismatch: '+declErrors.join(', '),warning:'BLOCKED — parameter declarations do not match SE37'});
+                await writer.close();return;
+              }
+              await send({stage:5,name:'Declaration Check',status:'done',message:'All declarations verified'});
+            }
+
+            // Stage 6: Syntax Test — deploy inactive, test call, check for errors
+            await send({stage:6,name:'Syntax Test',status:'running',message:'Testing code on SAP before activation...'});
+            var syntaxOk=true;
+            var syntaxError='';
+            try{
+              var fmMatch2=requirement.match(/\b(Z[A-Z_]+_RFC|Z[A-Z_]+)\b/);
+              if(fmMatch2){
+                var testFm=fmMatch2[1];
+                var ifResp2=await fetch('https://sap-api.v2retail.net/api/rfc/proxy',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:'RFC_READ_TABLE',QUERY_TABLE:'TFDIR',DELIMITER:'|',OPTIONS:[{TEXT:"FUNCNAME = '"+testFm+"'"}],FIELDS:[{FIELDNAME:'FUNCNAME'},{FIELDNAME:'PNAME'},{FIELDNAME:'INCLUDE'}]})});
+                var ifData2=await ifResp2.json();
+                if(ifData2.DATA&&ifData2.DATA.length>0){
+                  var cols2=(ifData2.DATA[0].WA||'').split('|').map(function(c){return c.trim()});
+                  var fg2=cols2[1]||'';
+                  var incNum=cols2[2]||'01';
+                  if(incNum.length===1)incNum='0'+incNum;
+                  var fgName=fg2.replace('SAPL','');
+                  var targetProg='L'+fgName+'U'+incNum;
+                  var deployResp=await fetch('https://sap-api.v2retail.net/api/abapstudio/deploy',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},body:JSON.stringify({program:targetProg,source:finalCode,title:'Pipeline test deploy (inactive)'})});
+                  var deployData=await deployResp.json();
+                  if(deployData.status==='E'||deployData.type==='E'){
+                    syntaxOk=false;
+                    syntaxError='Deploy failed: '+(deployData.message||'Unknown error');
+                  }else{
+                    await send({stage:6,name:'Syntax Test',status:'running',message:'Code deployed, testing FM call...'});
+                    var testResp=await fetch('https://sap-api.v2retail.net/api/rfc/proxy',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:testFm})});
+                    var testData=await testResp.json();
+                    var retMsg=JSON.stringify(testData);
+                    if(retMsg.indexOf('SYNTAX_ERROR')>=0||retMsg.indexOf('Syntax error')>=0||retMsg.indexOf('syntax error')>=0){
+                      syntaxOk=false;
+                      syntaxError='SYNTAX_ERROR when calling '+testFm+': '+retMsg.substring(0,200);
+                    }else if(retMsg.indexOf('LOAD_PROGRAM_NOT_FOUND')>=0){
+                      syntaxOk=false;
+                      syntaxError='Program not found after deploy — activation may have failed';
+                    }
+                  }
+                }
+              }
+            }catch(e){syntaxError='Test error: '+e.message;syntaxOk=false;}
+
+            if(!syntaxOk){
+              await send({stage:6,name:'Syntax Test',status:'failed',message:syntaxError});
+              await send({stage:6,name:'Syntax Test',status:'running',message:'Attempting auto-fix based on syntax error...'});
+              var fixResp=await claudeCall(KB+'\nYou are the SYNTAX FIXER. The code was deployed and got this error: '+syntaxError+'\nFix the EXACT syntax error. Keep ALL parameters identical. Output the COMPLETE fixed code.',[{role:'user',content:'Fix this syntax error in the code:\nError: '+syntaxError+'\n\nCode:\n```abap\n'+finalCode+'\n```\nOutput ONLY the fixed complete ABAP code.'}],8192);
+              if(fixResp&&fixResp.length>50){
+                finalCode=fixResp;
+                await send({stage:6,name:'Syntax Test',status:'running',message:'Re-deploying fixed code...'});
+                try{
+                  var redeployResp=await fetch('https://sap-api.v2retail.net/api/abapstudio/deploy',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},body:JSON.stringify({program:targetProg,source:finalCode,title:'Pipeline auto-fix redeploy'})});
+                  var redeployData=await redeployResp.json();
+                  var retestResp=await fetch('https://sap-api.v2retail.net/api/rfc/proxy',{method:'POST',headers:{'Content-Type':'application/json','X-RFC-Key':'v2-rfc-proxy-2026'},body:JSON.stringify({bapiname:testFm})});
+                  var retestData=await retestResp.json();
+                  var retestMsg=JSON.stringify(retestData);
+                  if(retestMsg.indexOf('SYNTAX_ERROR')>=0){
+                    await send({stage:6,name:'Syntax Test',status:'failed',message:'Auto-fix failed — still has syntax errors. Manual fix required.'});
+                    await send({stage:'done',final_code:finalCode,blocked:true,block_reason:'Syntax error persists after auto-fix attempt',warning:'BLOCKED — code has syntax errors on SAP'});
+                    await writer.close();return;
+                  }else{
+                    await send({stage:6,name:'Syntax Test',status:'done',message:'Auto-fixed and re-tested successfully'});
+                  }
+                }catch(e2){
+                  await send({stage:6,name:'Syntax Test',status:'failed',message:'Re-deploy failed: '+e2.message});
+                  await send({stage:'done',final_code:finalCode,blocked:true,block_reason:'Could not fix syntax error',warning:'BLOCKED'});
+                  await writer.close();return;
+                }
+              }else{
+                await send({stage:6,name:'Syntax Test',status:'failed',message:'Could not auto-fix'});
+                await send({stage:'done',final_code:finalCode,blocked:true,block_reason:syntaxError,warning:'BLOCKED — syntax error, auto-fix failed'});
+                await writer.close();return;
+              }
+            }else{
+              await send({stage:6,name:'Syntax Test',status:'done',message:'Code tested on SAP — no syntax errors'});
+            }
+
+            // Stage 7: Interface Validator — blocks deploy if parameters don't match SE37
+            if(existingInterface){
+              await send({stage:7,name:'Interface Validator',status:'running',message:'Verifying parameters match SE37 definition...'});
               var paramLines=existingInterface.split('\n').filter(function(l){return l.trim().indexOf('IMPORTING')>=0||l.trim().indexOf('EXPORTING')>=0||l.trim().indexOf('TABLES')>=0});
               var mismatches=[];
               paramLines.forEach(function(pl){var parts=pl.trim().split(/\s+/);var paramName=parts[1]||'';if(paramName&&finalCode.indexOf(paramName)<0)mismatches.push(paramName+' missing in generated code')});
               if(finalCode.match(/\bIV_[A-Z_]+/)&&existingInterface.indexOf('IV_')<0)mismatches.push('Uses IV_ params but FM expects IM_/EX_');
               if(finalCode.match(/\bEV_[A-Z_]+/)&&existingInterface.indexOf('EV_')<0&&existingInterface.indexOf('EX_')>=0)mismatches.push('Uses EV_ params but FM expects EX_');
               if(mismatches.length>0){
-                await send({stage:5,name:'Interface Validator',status:'failed',message:'BLOCKED: '+mismatches.join('; ')});
+                await send({stage:7,name:'Interface Validator',status:'failed',message:'BLOCKED: '+mismatches.join('; ')});
                 await send({stage:'done',final_code:finalCode,rating_initial:rating,cross_rating:crossRating,review:review,blocked:true,block_reason:'Interface mismatch: '+mismatches.join(', '),warning:'DO NOT DEPLOY — parameters do not match SE37 definition'});
                 await writer.close();return;
               }
-              await send({stage:5,name:'Interface Validator',status:'done',message:'All '+paramLines.length+' parameters verified against SE37'});
+              await send({stage:7,name:'Interface Validator',status:'done',message:'All '+paramLines.length+' parameters verified against SE37'});
             }else{
-              await send({stage:5,name:'Interface Validator',status:'skipped',message:'New FM — no existing interface to validate against'});
+              await send({stage:7,name:'Interface Validator',status:'skipped',message:'New FM — no existing interface to validate against'});
             }
 
             await send({stage:'done',final_code:finalCode,rating_initial:rating,cross_rating:crossRating,review:review,cross_review:crossReview,passed:passed});
