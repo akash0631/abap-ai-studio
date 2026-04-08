@@ -60,18 +60,28 @@ SYSTEM: DEV=192.168.144.174/210, PROD=192.168.144.170/600, QA=192.168.144.179/60
 
 ANTI-HALLUCINATION:
 1. NEVER invent tables. VERIFIED: ZWM_USR02, ZWM_DC_MASTER, ZWM_CRATE, ZWM_DCSTK1/2/3, ZWM_GRT_PUTWAY, ZSDC_FLRMSTR, ZSDC_ART_STATUS, ZDISC_ARTL. Standard: MARA,MARM,MAKT,MARC,LQUA,LAGP,VBAK,VBAP,EKKO,EKPO.
-2. V2 naming: IM_ (import), EX_ (export). NEVER IV_/EV_. Return: EX_RETURN TYPE BAPIRET2.
-3. FM!=FG. Check TFDIR.PNAME for include name.
-4. ALWAYS read PROD source FIRST via RPY_PROGRAM_READ. Optimize existing code. NEVER rewrite more than 50 percent.
-5. NEVER remove globals (GT_*, GS_*). NEVER change error messages. If unsure, SAY SO.
+2. V2 naming: IM_ for import, EX_ for export. NEVER use IV_ or EV_. Return: EX_RETURN TYPE BAPIRET2.
+3. FM name is NOT the same as FG name. Check TFDIR.PNAME for include name.
+4. ALWAYS read PROD source FIRST via RPY_PROGRAM_READ. Optimize existing code. NEVER rewrite more than half.
+5. NEVER remove globals like GT_ or GS_ variables. NEVER change error messages. If unsure, SAY SO.
 
-CODE: No SELECT*. No SELECT in LOOP. No WAIT UP TO. No COMMIT in LOOP. No BREAK. SY-SUBRC always. ABAP 7.4+.
+CODE: No SELECT-star. No SELECT in LOOP. No WAIT UP TO. No COMMIT in LOOP. No BREAK. SY-SUBRC always. ABAP 7.4+.
 
-INCIDENTS: 1) AI invented IV_CRATE_NUMBER and ZWM_CRATES table causing SYNTAX_ERROR. 2) AI rewrote ZSDC_DIRECT_ART_VAL_BARCOD_RFC 148/167 lines removing GT_DATA2 global causing SYNTAX_ERROR twice. 3) HHT IM_STOCK_TAKE_ID copy-paste bug. 4) v12 JSON to old Tomcat caused parse error, fixed with cloud proxy.
+INCIDENTS: AI invented fake params IV_CRATE_NUMBER causing SYNTAX_ERROR. AI rewrote ZSDC_DIRECT_ART_VAL_BARCOD_RFC removing GT_DATA2 causing SYNTAX_ERROR twice. HHT IM_STOCK_TAKE_ID copy-paste bug. v12 JSON to old Tomcat caused parse error fixed with cloud proxy.
 
-PIPELINE: Stage 0=read FUPARAREF+PROD source. 1=generate. 2=review. 3=fix. 4=cross-verify. 5=declaration check (interface block only). 6=deploy+syntax test with blank params (auto-restore if fail). 7=validate.
+PIPELINE: Stage 0=read FUPARAREF and PROD source. 1=generate. 2=review. 3=fix. 4=cross-verify. 5=declaration check interface block only. 6=deploy plus syntax test with blank params and auto-restore if fail. 7=validate.
 
-RULES: ALWAYS read PROD source FIRST. After deploy ALWAYS test FM. If syntax error auto-restore. NEVER remove GT_*/GS_*.`;const code=lines.slice(1).join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+RULES: ALWAYS read PROD source FIRST. After deploy ALWAYS test FM. If syntax error auto-restore. NEVER remove global variables.`;
+
+const TEMPLATES=[
+  {id:'abap_class',l:'ABAP Class',d:'OO class with methods'},{id:'cds_view',l:'CDS View',d:'Core Data Services view'},{id:'amdp',l:'AMDP',d:'HANA database procedure'},{id:'alv_report',l:'ALV Report',d:'List report with ALV grid'},
+  {id:'badi',l:'BAdI Implementation',d:'Enhancement spot'},{id:'function_module',l:'Function Module',d:'RFC-enabled FM'},{id:'bapi_wrapper',l:'BAPI Wrapper',d:'BAPI call wrapper class'},{id:'rap_bo',l:'RAP Business Object',d:'Full RAP stack'},
+];
+
+async function api(p,b,t){const h={'Content-Type':'application/json'};if(t)h.Authorization=`Bearer ${t}`;const r=await fetch(`${API_BASE}${p}`,{method:b?'POST':'GET',headers:h,body:b?JSON.stringify(b):undefined});const d=await r.json();if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d}
+
+function Fmt({text}){if(!text)return null;return React.createElement('div',null,text.split(/(```[\s\S]*?```)/g).map((p,i)=>{
+  if(p.startsWith('```')){const lines=p.slice(3,-3).split('\n');const lang=lines[0]?.trim()||'ABAP';const code=lines.slice(1).join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;');
     return React.createElement('div',{key:i,style:{margin:'6px 0'}},
       React.createElement('div',{style:{background:'#1E293B',borderRadius:'8px 8px 0 0',padding:'4px 10px',fontSize:11,color:'#94A3B8',display:'flex',justifyContent:'space-between'}},
         React.createElement('span',null,lang.toUpperCase()),React.createElement('button',{className:'bg sm',style:{color:'#94A3B8'},onClick:()=>navigator.clipboard?.writeText(lines.slice(1).join('\n'))},'Copy')),
