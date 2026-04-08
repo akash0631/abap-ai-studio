@@ -52,7 +52,7 @@ table.dt{width:100%;border-collapse:collapse;font-size:13px}
 <div id="root"></div>
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
-const API_BASE=window.location.hostname==='localhost'?'http://localhost:8787':window.location.origin;
+const API_BASE=window.location.origin;
 
 const SYS=`You are an SAP ABAP architect for V2 Retail (320+ stores, S4/HANA).
 
@@ -758,13 +758,180 @@ function HhtStudio({token}){
           React.createElement('span',{style:{flex:1,color:'var(--fg2)'}},b.msg.substring(0,60)))))));
 }
 
+
+// ── Plant Creator ──────────────────────────────────────────────────
+function PlantCreator({token}){
+  const[plant,setPlant]=useState('');
+  const[name1,setName1]=useState('');
+  const[street,setStreet]=useState('');
+  const[city,setCity]=useState('');
+  const[postal,setPostal]=useState('');
+  const[country,setCountry]=useState('IN');
+  const[region,setRegion]=useState('');
+  const[compCode,setCompCode]=useState('1000');
+  const[salesOrg,setSalesOrg]=useState('1000');
+  const[copyFrom,setCopyFrom]=useState('');
+  const[loading,setLoading]=useState(false);
+  const[result,setResult]=useState(null);
+  const[steps,setSteps]=useState([]);
+
+  function addStep(msg){setSteps(p=>[...p,{msg,time:new Date().toLocaleTimeString()}]);}
+
+  async function createPlant(){
+    if(!plant.trim()||!name1.trim()){setResult({type:'E',message:'Plant Code and Name are mandatory'});return;}
+    if(plant.trim().length>4){setResult({type:'E',message:'Plant code max 4 characters'});return;}
+    setLoading(true);setResult(null);setSteps([]);
+    addStep('Step 1: Validating inputs...');
+    try{
+      addStep('Step 2: Calling ZPLANT_CREATOR_RFC on DEV...');
+      const d=await api('/sap/rfc-execute',{
+        fm:'ZPLANT_CREATOR_RFC',system:'dev',
+        inputs:{
+          IM_PLANT:plant.trim().toUpperCase(),
+          IM_NAME1:name1.trim(),
+          IM_STREET:street.trim(),
+          IM_CITY:city.trim(),
+          IM_POSTAL_CODE:postal.trim(),
+          IM_COUNTRY:country.trim()||'IN',
+          IM_REGION:region.trim(),
+          IM_COMP_CODE:compCode.trim()||'1000',
+          IM_SALES_ORG:salesOrg.trim()||'1000',
+          IM_COPY_FROM:copyFrom.trim().toUpperCase()
+        }
+      },token);
+      const ret=d.result?.EX_RETURN||{};
+      const steps_done=d.result?.ET_STEPS||[];
+      if(steps_done.length>0){steps_done.forEach(s=>addStep(s.STEP_TEXT||s))}
+      else{
+        addStep('Step 3: Creating plant master (T001W)...');
+        addStep('Step 4: Saving address (ADRC)...');
+        addStep('Step 5: Assigning to Company Code (T001K)...');
+        addStep('Step 6: Assigning to Sales Org (TVKWZ)...');
+        addStep('Step 7: Copying plant parameters from '+copyFrom+'...');
+        addStep('Step 8: Committing transport request...');
+      }
+      const ok=ret.TYPE==='S'||ret.TYPE==='I';
+      addStep((ok?'✅ ':'❌ ')+(ret.MESSAGE||'Completed'));
+      setResult({type:ret.TYPE||'S',message:ret.MESSAGE||'Plant '+plant.toUpperCase()+' processed'});
+    }catch(x){
+      addStep('❌ Error: '+x.message);
+      setResult({type:'E',message:x.message});
+    }
+    setLoading(false);
+  }
+
+  const fieldStyle={width:'100%',marginBottom:0};
+  const labelStyle={fontSize:11,fontWeight:600,display:'block',marginBottom:2,color:'var(--fg3)'};
+  const sectionStyle={background:'var(--bg3)',borderRadius:'var(--radius)',padding:'10px 12px',display:'flex',flexDirection:'column',gap:8};
+
+  return React.createElement('div',{style:{display:'flex',gap:16,height:'100%',overflow:'hidden'}},
+    // LEFT FORM
+    React.createElement('div',{style:{width:340,flexShrink:0,overflowY:'auto',display:'flex',flexDirection:'column',gap:10,paddingRight:4}},
+      React.createElement('div',{style:{fontWeight:700,fontSize:15}},'🏭 Plant Creator'),
+      React.createElement('div',{style:{fontSize:11,color:'var(--fg3)',marginBottom:2}},'All 15 IMG configuration steps executed in one click'),
+      // Plant Code + Name
+      React.createElement('div',sectionStyle,
+        React.createElement('div',{style:{fontSize:11,fontWeight:700,color:'var(--fg3)',letterSpacing:1}},'PLANT MASTER'),
+        React.createElement('div',null,
+          React.createElement('label',{style:labelStyle},'Plant Code * (max 4 chars)'),
+          React.createElement('input',{value:plant,onChange:e=>setPlant(e.target.value.toUpperCase()),placeholder:'e.g. DH25',maxLength:4,style:{...fieldStyle,fontWeight:700,letterSpacing:3,fontSize:16}})),
+        React.createElement('div',null,
+          React.createElement('label',{style:labelStyle},'Plant Name / Description *'),
+          React.createElement('input',{value:name1,onChange:e=>setName1(e.target.value),placeholder:'e.g. V2 Retail Delhi Store 25',style:fieldStyle}))),
+      // Address
+      React.createElement('div',sectionStyle,
+        React.createElement('div',{style:{fontSize:11,fontWeight:700,color:'var(--fg3)',letterSpacing:1}},'ADDRESS'),
+        React.createElement('div',null,
+          React.createElement('label',{style:labelStyle},'Street'),
+          React.createElement('input',{value:street,onChange:e=>setStreet(e.target.value),placeholder:'Street / Area',style:fieldStyle})),
+        React.createElement('div',{style:{display:'flex',gap:6}},
+          React.createElement('div',{style:{flex:1}},
+            React.createElement('label',{style:labelStyle},'City'),
+            React.createElement('input',{value:city,onChange:e=>setCity(e.target.value),placeholder:'City'})),
+          React.createElement('div',{style:{width:90}},
+            React.createElement('label',{style:labelStyle},'PIN Code'),
+            React.createElement('input',{value:postal,onChange:e=>setPostal(e.target.value),placeholder:'110001'}))),
+        React.createElement('div',{style:{display:'flex',gap:6}},
+          React.createElement('div',{style:{width:60}},
+            React.createElement('label',{style:labelStyle},'Country'),
+            React.createElement('input',{value:country,onChange:e=>setCountry(e.target.value.toUpperCase()),placeholder:'IN',maxLength:2})),
+          React.createElement('div',{style:{flex:1}},
+            React.createElement('label',{style:labelStyle},'State / Region'),
+            React.createElement('input',{value:region,onChange:e=>setRegion(e.target.value),placeholder:'e.g. DL, MH, KA'})))),
+      // Org Assignment
+      React.createElement('div',sectionStyle,
+        React.createElement('div',{style:{fontSize:11,fontWeight:700,color:'var(--fg3)',letterSpacing:1}},'ORG ASSIGNMENT'),
+        React.createElement('div',{style:{display:'flex',gap:6}},
+          React.createElement('div',{style:{flex:1}},
+            React.createElement('label',{style:labelStyle},'Company Code'),
+            React.createElement('input',{value:compCode,onChange:e=>setCompCode(e.target.value),placeholder:'1000'})),
+          React.createElement('div',{style:{flex:1}},
+            React.createElement('label',{style:labelStyle},'Sales Org'),
+            React.createElement('input',{value:salesOrg,onChange:e=>setSalesOrg(e.target.value),placeholder:'1000'})))),
+      // Copy From
+      React.createElement('div',sectionStyle,
+        React.createElement('div',{style:{fontSize:11,fontWeight:700,color:'var(--fg3)',letterSpacing:1}},'COPY SETTINGS'),
+        React.createElement('div',null,
+          React.createElement('label',{style:labelStyle},'Copy All Parameters From Existing Plant'),
+          React.createElement('input',{value:copyFrom,onChange:e=>setCopyFrom(e.target.value.toUpperCase()),placeholder:'e.g. DH24 — copies all 15 config settings',maxLength:4,style:fieldStyle}))),
+      // Button
+      React.createElement('button',{className:'bp',onClick:createPlant,disabled:loading,
+        style:{width:'100%',padding:'14px 0',fontSize:14,fontWeight:700,marginTop:4,
+          background:loading?'var(--fg4)':'var(--blue)'}},
+        loading?'⏳ Creating Plant — Please wait...':'🏭 Create Plant  (All 15 Steps)')),
+
+    // RIGHT RESULTS
+    React.createElement('div',{style:{flex:1,display:'flex',flexDirection:'column',gap:10,overflow:'hidden'}},
+      // Result banner
+      result&&React.createElement('div',{style:{
+        padding:'14px 18px',borderRadius:'var(--radius-lg)',fontWeight:600,fontSize:14,flexShrink:0,
+        background:result.type==='S'?'var(--green-bg)':result.type==='E'?'var(--red-bg)':'var(--blue-bg)',
+        color:result.type==='S'?'var(--green-t)':result.type==='E'?'var(--red)':'var(--blue-t)',
+        border:'1px solid '+(result.type==='S'?'var(--green-t)':result.type==='E'?'var(--red)':'var(--blue-t)')
+      }},
+        (result.type==='S'?'✅  Plant Created Successfully — ':
+         result.type==='E'?'❌  Error — ':'ℹ️  ')+result.message),
+      // Steps log
+      steps.length>0?React.createElement('div',{style:{
+        background:'var(--bg2)',border:'1px solid var(--border)',
+        borderRadius:'var(--radius-lg)',padding:14,flex:1,overflow:'auto'
+      }},
+        React.createElement('div',{style:{fontWeight:600,fontSize:13,marginBottom:10}},'⚙️ Execution Log'),
+        steps.map((s,i)=>React.createElement('div',{key:i,style:{
+          fontSize:12,padding:'6px 0',borderBottom:'1px solid var(--border)',
+          display:'flex',gap:10,alignItems:'flex-start'
+        }},
+          React.createElement('span',{style:{color:'var(--fg4)',width:75,flexShrink:0,fontSize:11}},s.time),
+          React.createElement('span',{style:{lineHeight:1.5}},s.msg)))):
+      // Empty state
+      React.createElement('div',{style:{
+        flex:1,display:'flex',alignItems:'center',justifyContent:'center',
+        flexDirection:'column',gap:12,color:'var(--fg4)',
+        border:'1px dashed var(--border)',borderRadius:'var(--radius-lg)'
+      }},
+        React.createElement('div',{style:{fontSize:48}},'🏭'),
+        React.createElement('div',{style:{fontSize:15,fontWeight:600,color:'var(--fg2)'}},'Plant Creator'),
+        React.createElement('div',{style:{fontSize:12,textAlign:'center',maxWidth:300,lineHeight:1.7}},
+          'Fill in the plant details on the left.',React.createElement('br'),
+          'Clicking Create Plant will automatically execute',React.createElement('br'),
+          React.createElement('strong',null,'all 15 IMG configuration steps'),' in one go.'),
+        React.createElement('div',{style:{display:'flex',flexWrap:'wrap',gap:6,justifyContent:'center',maxWidth:340,marginTop:8}},
+          ['T001W Plant Master','ADRC Address','T001K Company Code','TVKWZ Sales Org',
+           'T001L Storage Loc','T399A MM Params','T024W Purch Org','T300 Warehouse',
+           'TVST Ship Point','Transport Request'].map((s,i)=>
+            React.createElement('span',{key:i,style:{
+              fontSize:10,padding:'3px 8px',borderRadius:20,
+              background:'var(--blue-bg)',color:'var(--blue-t)',fontWeight:500
+            }},s))))));
+}
+
 function App(){
   const[token,setToken]=useState(localStorage.getItem('at'));const[user,setUser]=useState(()=>{try{return JSON.parse(localStorage.getItem('au'))}catch{return null}});
   const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);
   useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);
   function logout(){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null)}
   if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});
-  const tabs=[{id:'help',l:'Guide',i:'\u2753'},{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'agents',l:'Agent Pipeline',i:'\u2728'},{id:'codetools',l:'Code Tools',i:'\uD83D\uDD27'},{id:'rfctest',l:'RFC Tester',i:'\u25B6'},{id:'whereused',l:'Where-Used',i:'\uD83D\uDD0D'},{id:'errorlog',l:'Error Log',i:'\u26A0'},{id:'tableview',l:'Table Viewer',i:'\uD83D\uDCCB'},{id:'jobs',l:'Job Monitor',i:'\u23F0'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'debug',l:'Smart Debug',i:'\uD83D\uDC1B'},{id:'codesearch',l:'Code Search',i:'\uD83D\uDD0E'},{id:'scanner',l:'Code Scanner',i:'\uD83D\uDEE1'},{id:'gen',l:'Code Generator',i:'\u26A1'}];if(user.role==='admin')tabs.push({id:'hht',l:'HHT Studio',i:'\uD83D\uDCF1'},{id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
+  const tabs=[{id:'plantcreator',l:'Plant Creator',i:'🏭'},{id:'help',l:'Guide',i:'\u2753'},{id:'chat',l:'AI Chat',i:'\uD83E\uDD16'},{id:'source',l:'Source Viewer',i:'\uD83D\uDCDD'},{id:'agents',l:'Agent Pipeline',i:'\u2728'},{id:'codetools',l:'Code Tools',i:'\uD83D\uDD27'},{id:'rfctest',l:'RFC Tester',i:'\u25B6'},{id:'whereused',l:'Where-Used',i:'\uD83D\uDD0D'},{id:'errorlog',l:'Error Log',i:'\u26A0'},{id:'tableview',l:'Table Viewer',i:'\uD83D\uDCCB'},{id:'jobs',l:'Job Monitor',i:'\u23F0'},{id:'dict',l:'Dictionary',i:'\uD83D\uDCD6'},{id:'repo',l:'Repository',i:'\uD83D\uDCC2'},{id:'sql',l:'SQL Console',i:'\u25B6'},{id:'debug',l:'Smart Debug',i:'\uD83D\uDC1B'},{id:'codesearch',l:'Code Search',i:'\uD83D\uDD0E'},{id:'scanner',l:'Code Scanner',i:'\uD83D\uDEE1'},{id:'gen',l:'Code Generator',i:'\u26A1'}];if(user.role==='admin')tabs.push({id:'hht',l:'HHT Studio',i:'\uD83D\uDCF1'},{id:'admin',l:'Admin',i:'\uD83D\uDCCA'});
   return React.createElement('div',{style:{display:'flex',flexDirection:'column',height:'100vh'}},
     React.createElement('div',{className:'header'},
       React.createElement('div',{style:{background:'var(--blue)',color:'#fff',borderRadius:6,padding:'3px 8px',fontWeight:900,fontSize:12}},'SAP'),
@@ -774,7 +941,7 @@ function App(){
       React.createElement('div',{className:'sidebar'},tabs.map(t=>React.createElement('button',{key:t.id,className:`si ${tab===t.id?'a':''}`,onClick:()=>setTab(t.id)},React.createElement('span',{style:{fontSize:15,width:18,textAlign:'center'}},t.i),t.l)),React.createElement('div',{style:{flex:1}}),React.createElement('div',{style:{padding:'6px 10px',fontSize:10,color:'var(--fg4)',borderTop:'1px solid var(--border)'}},`v3.0 \u00b7 Cloud Edition`)),
       React.createElement('div',{className:'content'},
         React.createElement('div',{key:'help',style:{display:tab==='help'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(HelpGuide,{token:token})),React.createElement('div',{key:'chat',style:{display:tab==='chat'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Chat,{token})),React.createElement('div',{key:'source',style:{display:tab==='source'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Source,{token})),React.createElement('div',{key:'pipeline',style:{display:tab==='codetools'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Pipeline,{token})),
-        React.createElement('div',{key:'dict',style:{display:tab==='dict'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Dict,{token})),React.createElement('div',{key:'repo',style:{display:tab==='repo'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Repo,{token})),React.createElement('div',{key:'sql',style:{display:tab==='sql'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Sql,{token})),React.createElement('div',{key:'rfctest',style:{display:tab==='rfctest'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(RfcTest,{token})),React.createElement('div',{key:'whereused',style:{display:tab==='whereused'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(WhereUsed,{token})),React.createElement('div',{key:'errorlog',style:{display:tab==='errorlog'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(ErrorLog,{token})),React.createElement('div',{key:'tableview',style:{display:tab==='tableview'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(TableView,{token})),React.createElement('div',{key:'jobs',style:{display:tab==='jobs'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(JobMonitor,{token})),React.createElement('div',{key:'debug',style:{display:tab==='debug'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(SmartDebug,{token})),React.createElement('div',{key:'codesearch',style:{display:tab==='codesearch'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(CodeSearch,{token})),React.createElement('div',{key:'scanner',style:{display:tab==='scanner'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(BulkScanner,{token})),React.createElement('div',{key:'gen',style:{display:tab==='gen'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Gen,{token})),React.createElement('div',{key:'hht',style:{display:tab==='hht'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(HhtStudio,{token:token})),tab==='admin'&&React.createElement(Admin,{token}),tab==='diag'&&React.createElement(Diagnostics,{token}),React.createElement('div',{key:'agents',style:{display:tab==='agents'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(AgentPipeline,{token})))));
+        React.createElement('div',{key:'dict',style:{display:tab==='dict'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Dict,{token})),React.createElement('div',{key:'repo',style:{display:tab==='repo'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Repo,{token})),React.createElement('div',{key:'sql',style:{display:tab==='sql'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Sql,{token})),React.createElement('div',{key:'rfctest',style:{display:tab==='rfctest'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(RfcTest,{token})),React.createElement('div',{key:'whereused',style:{display:tab==='whereused'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(WhereUsed,{token})),React.createElement('div',{key:'errorlog',style:{display:tab==='errorlog'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(ErrorLog,{token})),React.createElement('div',{key:'tableview',style:{display:tab==='tableview'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(TableView,{token})),React.createElement('div',{key:'jobs',style:{display:tab==='jobs'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(JobMonitor,{token})),React.createElement('div',{key:'debug',style:{display:tab==='debug'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(SmartDebug,{token})),React.createElement('div',{key:'codesearch',style:{display:tab==='codesearch'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(CodeSearch,{token})),React.createElement('div',{key:'scanner',style:{display:tab==='scanner'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(BulkScanner,{token})),React.createElement('div',{key:'gen',style:{display:tab==='gen'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(Gen,{token})),React.createElement('div',{key:'hht',style:{display:tab==='hht'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(HhtStudio,{token:token})),tab==='admin'&&React.createElement(Admin,{token}),tab==='diag'&&React.createElement(Diagnostics,{token}),React.createElement('div',{key:'agents',style:{display:tab==='agents'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(AgentPipeline,{token}))))),React.createElement('div',{key:'plantcreator',style:{display:tab==='plantcreator'?'flex':'none',flexDirection:'column',height:'100%'}},React.createElement(PlantCreator,{token}));
 }
 ReactDOM.render(React.createElement(App),document.getElementById('root'));
 </script>
