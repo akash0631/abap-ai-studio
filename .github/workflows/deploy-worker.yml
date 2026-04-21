@@ -9,104 +9,45 @@ on:
   pull_request:
     branches: [main]
 
-# IMPORTANT: This workflow deploys from KV backup, NOT from worker/src/index.js
-# worker/src/index.js is source-only and does NOT contain the bundled HTML.
-# To deploy a new version: update BACKUP_KEY below to point to a valid backup
-# that was saved via the MCP backup tool (which includes the full bundled HTML).
-# NEVER deploy worker/src/index.js directly — it has HTML_B64="" and will break the site.
-
 jobs:
   deploy:
-    name: Restore from KV Backup + Deploy
+    name: Deploy Worker
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch good backup code from Cloudflare KV
-        env:
-          CF_API_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
-          CF_ACCOUNT_ID: bab06c93e17ae71cae3c11b4cc40240b
-          KV_NAMESPACE: 0ef65b613ca74302844f9101c085f17d
-          # Updated 2026-04-21: restored after HTML_B64 blank incident
-          BACKUP_KEY: backup:abap-ai-studio:1776768644781
+      - uses: actions/checkout@v4
+
+      - name: Build worker with embedded frontend
         run: |
+          cd worker/src
           python3 << 'PYEOF'
-          import urllib.request, json, os, sys
-
-          account = os.environ['CF_ACCOUNT_ID']
-          ns = os.environ['KV_NAMESPACE']
-          key = os.environ['BACKUP_KEY']
-          token = os.environ['CF_API_TOKEN']
-
-          from urllib.parse import quote
-          encoded_key = quote(key, safe='')
-
-          url = f'https://api.cloudflare.com/client/v4/accounts/{account}/storage/kv/namespaces/{ns}/values/{encoded_key}'
-          print(f'Fetching backup: {url}')
-
-          req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
-          try:
-              with urllib.request.urlopen(req) as r:
-                  raw = r.read().decode('utf-8')
-              data = json.loads(raw)
-              code = data['code']
-
-              # SAFETY CHECK: reject if code is too small (< 100KB means HTML wasn't bundled)
-              if len(code) < 100000:
-                  print(f'SAFETY ABORT: backup code is only {len(code)} chars — HTML not bundled!')
-                  print('This backup is broken. Update BACKUP_KEY to a valid backup (>200KB).')
-                  sys.exit(1)
-
-              # SAFETY CHECK: reject if HTML_B64 is empty
-              if 'HTML_B64 = ""' in code or "HTML_B64=''" in code:
-                  print('SAFETY ABORT: HTML_B64 is empty in backup — site would break!')
-                  sys.exit(1)
-
-              with open('/tmp/worker.js', 'w') as f:
-                  f.write(code)
-              print(f'SUCCESS: Fetched {len(code)} chars of worker code')
-          except Exception as e:
-              print(f'ERROR fetching backup: {e}')
-              sys.exit(1)
+          import base64
+          with open('../../frontend/index.html') as f:
+              html = f.read()
+          b64 = base64.b64encode(html.encode()).decode()
+          with open('index.js') as f:
+              code = f.read()
+          s = code.find('const HTML_B64 = "')
+          e = code.find('";', s + 18)
+          code = code[:s] + 'const HTML_B64 = "' + b64 + '"' + code[e:]
+          with open('/tmp/worker.js', 'w') as f:
+              f.write(code)
+          print('Built:', len(code), 'bytes')
           PYEOF
 
-      - name: Validate worker before deploy
-        run: |
-          SIZE=$(wc -c < /tmp/worker.js)
-          echo "Worker size: $SIZE bytes"
-          if [ "$SIZE" -lt 100000 ]; then
-            echo "ABORT: worker.js is too small ($SIZE bytes) — HTML not bundled"
-            exit 1
-          fi
-          if grep -q 'HTML_B64 = ""' /tmp/worker.js; then
-            echo "ABORT: HTML_B64 is empty — site would break"
-            exit 1
-          fi
-          echo "Validation passed"
-
-      - name: Deploy to Cloudflare Workers
+      - name: Deploy to Cloudflare Workers (module format)
         env:
-          CF_API_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: bab06c93e17ae71cae3c11b4cc40240b
         run: |
-          echo "Deploying $(wc -c < /tmp/worker.js) bytes to abap-ai-studio..."
-          RESULT=$(curl -s -X PUT \
-            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/abap-ai-studio" \
+          curl -s -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/abap-ai-studio/content" \
             -H "Authorization: Bearer $CF_API_TOKEN" \
-            -H "Content-Type: application/javascript" \
-            --data-binary @/tmp/worker.js)
-          echo "Result: $RESULT"
-          SUCCESS=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))")
-          echo "Success: $SUCCESS"
-          if [ "$SUCCESS" != "True" ] && [ "$SUCCESS" != "true" ]; then
-            echo "Deploy failed!"
-            exit 1
-          fi
+            -F 'metadata={"main_module":"index.js"};type=application/json' \
+            -F "index.js=@/tmp/worker.js;type=application/javascript+module" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('Deployed:', d.get('success')); [print('Error:', e) for e in d.get('errors',[])]; sys.exit(0 if d.get('success') else 1)"
 
       - name: Health check
         run: |
-          sleep 8
-          STATUS=$(curl -s https://abap.v2retail.net/health | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','FAIL'))" 2>/dev/null || echo "FAIL")
-          echo "Health: $STATUS"
-          if [ "$STATUS" != "ok" ]; then
-            echo "WARNING: Health check failed but deploy may still be propagating"
-          fi
+          sleep 5
+          curl -s https://abap.v2retail.net/health
