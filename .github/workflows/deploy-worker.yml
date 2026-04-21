@@ -9,6 +9,12 @@ on:
   pull_request:
     branches: [main]
 
+# IMPORTANT: This workflow deploys from KV backup, NOT from worker/src/index.js
+# worker/src/index.js is source-only and does NOT contain the bundled HTML.
+# To deploy a new version: update BACKUP_KEY below to point to a valid backup
+# that was saved via the MCP backup tool (which includes the full bundled HTML).
+# NEVER deploy worker/src/index.js directly — it has HTML_B64="" and will break the site.
+
 jobs:
   deploy:
     name: Restore from KV Backup + Deploy
@@ -20,7 +26,8 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
           CF_ACCOUNT_ID: bab06c93e17ae71cae3c11b4cc40240b
           KV_NAMESPACE: 0ef65b613ca74302844f9101c085f17d
-          BACKUP_KEY: backup:abap-ai-studio:1776759693005
+          # Updated 2026-04-21: restored after HTML_B64 blank incident
+          BACKUP_KEY: backup:abap-ai-studio:1776768644781
         run: |
           python3 << 'PYEOF'
           import urllib.request, json, os, sys
@@ -30,12 +37,11 @@ jobs:
           key = os.environ['BACKUP_KEY']
           token = os.environ['CF_API_TOKEN']
 
-          # URL-encode the key (colons need encoding)
           from urllib.parse import quote
           encoded_key = quote(key, safe='')
 
           url = f'https://api.cloudflare.com/client/v4/accounts/{account}/storage/kv/namespaces/{ns}/values/{encoded_key}'
-          print(f'Fetching: {url}')
+          print(f'Fetching backup: {url}')
 
           req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
           try:
@@ -43,15 +49,41 @@ jobs:
                   raw = r.read().decode('utf-8')
               data = json.loads(raw)
               code = data['code']
+
+              # SAFETY CHECK: reject if code is too small (< 100KB means HTML wasn't bundled)
+              if len(code) < 100000:
+                  print(f'SAFETY ABORT: backup code is only {len(code)} chars — HTML not bundled!')
+                  print('This backup is broken. Update BACKUP_KEY to a valid backup (>200KB).')
+                  sys.exit(1)
+
+              # SAFETY CHECK: reject if HTML_B64 is empty
+              if 'HTML_B64 = ""' in code or "HTML_B64=''" in code:
+                  print('SAFETY ABORT: HTML_B64 is empty in backup — site would break!')
+                  sys.exit(1)
+
               with open('/tmp/worker.js', 'w') as f:
                   f.write(code)
               print(f'SUCCESS: Fetched {len(code)} chars of worker code')
           except Exception as e:
-              print(f'ERROR: {e}')
+              print(f'ERROR fetching backup: {e}')
               sys.exit(1)
           PYEOF
 
-      - name: Deploy to Cloudflare Workers (service worker format)
+      - name: Validate worker before deploy
+        run: |
+          SIZE=$(wc -c < /tmp/worker.js)
+          echo "Worker size: $SIZE bytes"
+          if [ "$SIZE" -lt 100000 ]; then
+            echo "ABORT: worker.js is too small ($SIZE bytes) — HTML not bundled"
+            exit 1
+          fi
+          if grep -q 'HTML_B64 = ""' /tmp/worker.js; then
+            echo "ABORT: HTML_B64 is empty — site would break"
+            exit 1
+          fi
+          echo "Validation passed"
+
+      - name: Deploy to Cloudflare Workers
         env:
           CF_API_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
           CF_ACCOUNT_ID: bab06c93e17ae71cae3c11b4cc40240b
