@@ -1,1 +1,1 @@
-2026-04-21T09:30 — Emergency restore trigger. Site broken, needs immediate redeploy.
+2026-04-21T09:35 — Emergency restore: trigger CI to redeploy from KV backup
