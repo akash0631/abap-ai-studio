@@ -15,49 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
       - name: Check Worker syntax
         run: node -c worker/src/index.js
-      
-      - name: Check frontend HTML exists
-        run: |
-          if [ ! -f frontend/index.html ]; then
-            echo "ERROR: frontend/index.html not found"
-            exit 1
-          fi
-          echo "Frontend HTML: $(wc -c < frontend/index.html) bytes"
-
       - name: Build frontend into Worker
-        run: |
-          cd worker/src
-          python3 -c "
-          import base64
-          with open('../../frontend/index.html') as f: html=f.read()
-          b64=base64.b64encode(html.encode()).decode()
-          with open('index.js') as f: code=f.read()
-          start=code.find('const HTML_B64 = \"')
-          end=code.find('\";',start+18)
-          code=code[:start]+'const HTML_B64 = \"'+b64+'\"'+code[end:]
-          with open('index.js','w') as f: f.write(code)
-          print(f'Built: {len(code)} bytes, HTML: {len(html)} bytes, B64: {len(b64)} chars')
-          "
-          node -c index.js
-          echo "Final syntax check: PASSED"
-
-  deploy:
-    name: Deploy to Production
-    needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Build Worker with Frontend
         run: |
           cd worker/src
           python3 -c "
@@ -71,14 +35,36 @@ jobs:
           with open('index.js','w') as f: f.write(code)
           print(f'Built: {len(code)} bytes')
           "
-      
+          node -c index.js
+          echo "Syntax check: PASSED"
+
+  deploy:
+    name: Deploy to Production
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Worker
+        run: |
+          cd worker/src
+          python3 -c "
+          import base64
+          with open('../../frontend/index.html') as f: html=f.read()
+          b64=base64.b64encode(html.encode()).decode()
+          with open('index.js') as f: code=f.read()
+          start=code.find('const HTML_B64 = \"')
+          end=code.find('\";',start+18)
+          code=code[:start]+'const HTML_B64 = \"'+b64+'\"'+code[end:]
+          with open('index.js','w') as f: f.write(code)
+          "
       - name: Deploy to Cloudflare Workers
         env:
-          CF_API_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
-          CF_ACCOUNT_ID: bab06c93e17ae71cae3c11b4cc40240b
+          CF_TOKEN: UiPONPWg2l0VbTVCitbkpZ-tu8gKvhgH42tCbsrZ
+          CF_ACCOUNT: bab06c93e17ae71cae3c11b4cc40240b
         run: |
-          curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/abap-ai-studio/content" \
-            -H "Authorization: Bearer $CF_API_TOKEN" \
+          curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/scripts/abap-ai-studio/content" \
+            -H "Authorization: Bearer $CF_TOKEN" \
             -F 'metadata={"main_module":"index.js"};type=application/json' \
             -F "index.js=@worker/src/index.js;type=application/javascript+module" \
             | python3 -c "
@@ -86,13 +72,10 @@ jobs:
           d=json.load(sys.stdin)
           print('Deployed:', d.get('success'))
           if not d.get('success'):
-              print('Errors:', d.get('errors'))
-              sys.exit(1)
+            print('Errors:', d.get('errors'))
+            sys.exit(1)
           "
-      
       - name: Health check
         run: |
           sleep 5
-          STATUS=$(curl -s https://abap.v2retail.net/health | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','FAIL'))")
-          echo "Health: $STATUS"
-          [ "$STATUS" = "ok" ] || exit 1
+          curl -sf https://abap.v2retail.net/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('Health:', d.get('status')); sys.exit(0 if d.get('status')=='ok' else 1)"
