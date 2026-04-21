@@ -1,1 +1,1 @@
-// Trigger deploy: 2026-04-21T08:52 — Emergency restore + fix env secrets + add /sap/connect + /sap/query
+2026-04-21T09:30 — Emergency restore trigger. Site broken, needs immediate redeploy.
