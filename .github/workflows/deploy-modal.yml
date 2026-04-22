@@ -13,28 +13,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build worker with SAP Modal patch
+      - name: Build worker with embedded patched frontend
         run: |
-          cd worker/src
-          python3 build.py
-          ls -la /tmp/w.js || ls -la worker_built.js
+          pip install requests -q
+          python3 << 'PYEOF'
+          import base64, re, os
+
+          # Read base worker (has all backend fixes)
+          with open('worker/src/base_worker.js') as f:
+              code = f.read()
+          print(f"Base worker: {len(code)} chars")
+
+          # Read the patched frontend (has SapModal + password field)
+          with open('frontend/index.html') as f:
+              html = f.read()
+          print(f"Frontend HTML: {len(html)} bytes")
+
+          # Verify the frontend has the SAP modal
+          if 'SapModal' not in html:
+              print("ERROR: frontend/index.html missing SapModal component!")
+              exit(1)
+          if "type:'password'" not in html:
+              print("ERROR: frontend/index.html missing password input!")
+              exit(1)
+
+          # Embed HTML into worker
+          b64 = base64.b64encode(html.encode()).decode()
+          m = re.search(r'(const HTML_B64\s*=\s*")[^"]*"', code)
+          if not m:
+              print("ERROR: HTML_B64 placeholder not found!")
+              exit(1)
+          code = code[:m.start(1)] + 'const HTML_B64 = "' + b64 + '"' + code[m.end():]
+          print(f"Final worker: {len(code)} chars")
+          print(f"Has SapModal: {'SapModal' in base64.b64decode(b64).decode()}")
+
+          with open('/tmp/worker.js', 'w') as f:
+              f.write(code)
+          print("Saved /tmp/worker.js")
+          PYEOF
 
       - name: Deploy to Cloudflare (service-worker format)
         run: |
-          WORKER_FILE="/tmp/w.js"
-          if [ ! -f "$WORKER_FILE" ]; then
-            WORKER_FILE="worker/src/worker_built.js"
-          fi
-          echo "Deploying $WORKER_FILE ($(wc -c < $WORKER_FILE) bytes)..."
-
-          curl -s -X PUT \
+          echo "Worker size: $(wc -c < /tmp/worker.js) bytes"
+          RESULT=$(curl -s -X PUT \
             "https://api.cloudflare.com/client/v4/accounts/bab06c93e17ae71cae3c11b4cc40240b/workers/scripts/abap-ai-studio" \
             -H "Authorization: Bearer UiPONPWg2l0VbTVCitbkpZ-tu8gKvhgH42tCbsrZ" \
             -H "Content-Type: application/javascript" \
-            --data-binary @$WORKER_FILE | python3 -c "
+            --data-binary @/tmp/worker.js)
+          echo "Result: $RESULT"
+          echo "$RESULT" | python3 -c "
           import sys,json
           d=json.load(sys.stdin)
-          print('Success:', d.get('success'))
+          print('Deployed:', d.get('success'))
           for e in d.get('errors',[]): print('Error:', e)
           sys.exit(0 if d.get('success') else 1)
           "
@@ -43,5 +73,3 @@ jobs:
         run: |
           sleep 6
           curl -s https://abap.v2retail.net/health
-          echo ""
-          echo "Done!"
