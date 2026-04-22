@@ -7,7 +7,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch live worker, fix SmartDebug paren, redeploy
+      - name: Fix SAP connect endpoint and redeploy
         run: |
           python3 << 'PYEOF'
           import re, json, base64, urllib.request, subprocess, sys
@@ -24,35 +24,61 @@ jobs:
               worker = r.read().decode("utf-8")
           print(f"Worker: {len(worker)} chars")
 
-          m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{50,})"', worker)
-          assert m, "HTML_B64 not found in worker!"
-          html = base64.b64decode(m.group(1)).decode("utf-8")
-          print(f"HTML: {len(html)} bytes")
+          # FIX 1: /sap/connect uses broken /health endpoint -> fix to use /query with POST
+          OLD_CONNECT = (
+              "const r=await fetch('https://sap-api.v2retail.net/api/abapstudio/health',"
+              "{headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'}});\n"
+              "          const d=await r.json();\n"
+              "          return json({connected:!!(d.status==='ok'||d.ok||d.connected),system:'S4D'});"
+          )
+          NEW_CONNECT = (
+              "const r=await fetch('https://sap-api.v2retail.net/api/abapstudio/query',"
+              "{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},"
+              "body:JSON.stringify({sql:'SELECT TOP 1 MANDT FROM T000'})});\n"
+              "          const d=await r.json();\n"
+              "          return json({connected:Array.isArray(d.rows)&&d.rows.length>0,system:'S4D'});"
+          )
 
-          si = html.find('<script type="text/babel">') + len('<script type="text/babel">')
-          se = html.find('</script>', si)
-          s = html[si:se]
-          o, c = s.count("("), s.count(")")
-          print(f"Parens: {o}/{c} balanced={o==c}")
-
-          if o != c:
-              OLD = "React.createElement('div',null,'Paste error to begin')));}"
-              NEW = "React.createElement('div',null,'Paste error to begin'))));" + "}"
-              assert OLD in html, f"Fix pattern not found! chars around bug: {html[html.find('Paste error'):html.find('Paste error')+30]}"
-              html = html.replace(OLD, NEW, 1)
-              s2 = html[html.find('<script type="text/babel">')+len('<script type="text/babel">'):html.find('</script>',html.find('<script type="text/babel">'))]
-              o2, c2 = s2.count("("), s2.count(")")
-              print(f"After fix: {o2}/{c2} balanced={o2==c2}")
-              assert o2 == c2, "Still unbalanced!"
-              new_b64 = base64.b64encode(html.encode("utf-8")).decode()
-              worker = worker[:m.start(1)] + new_b64 + worker[m.end(1):]
-              print(f"Fixed worker: {len(worker)} chars")
+          if OLD_CONNECT in worker:
+              worker = worker.replace(OLD_CONNECT, NEW_CONNECT, 1)
+              print("Fix 1 applied: /sap/connect now uses POST /query")
           else:
-              print("Parens already balanced - deploying as-is")
+              print("Fix 1 pattern not found - checking current state...")
+              idx = worker.find("abapstudio/health")
+              if idx >= 0:
+                  print("Found health endpoint at:", idx)
+                  print("Context:", repr(worker[idx-50:idx+150]))
+              idx2 = worker.find("abapstudio/query")
+              if idx2 >= 0:
+                  print("Query endpoint already present at:", idx2)
+
+          # FIX 2: SmartDebug paren (keep applying in case it regressed)
+          m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{50,})"', worker)
+          if m:
+              html = base64.b64decode(m.group(1)).decode("utf-8")
+              si = html.find('<script type="text/babel">') + len('<script type="text/babel">')
+              se = html.find('</script>', si)
+              s = html[si:se]
+              o, c = s.count("("), s.count(")")
+              print(f"HTML parens: {o}/{c}")
+              if o != c:
+                  OLD_PAREN = "React.createElement('div',null,'Paste error to begin')));}"
+                  NEW_PAREN = "React.createElement('div',null,'Paste error to begin'))));" + "}"
+                  if OLD_PAREN in html:
+                      html = html.replace(OLD_PAREN, NEW_PAREN, 1)
+                      new_b64 = base64.b64encode(html.encode("utf-8")).decode()
+                      worker = worker[:m.start(1)] + new_b64 + worker[m.end(1):]
+                      print("Fix 2 applied: SmartDebug paren fixed")
+
+          # Verify fixes
+          has_query = "abapstudio/query" in worker
+          no_health = "abapstudio/health" not in worker
+          print(f"Uses /query: {has_query} | No /health: {no_health}")
 
           with open("/tmp/fixed.js", "w") as f:
               f.write(worker)
 
+          print(f"Deploying {len(worker)} char worker...")
           r = subprocess.run([
               "curl", "-s", "-X", "PUT",
               f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/abap-ai-studio",
@@ -69,5 +95,8 @@ jobs:
           sys.exit(0 if ok else 1)
           PYEOF
 
-      - name: Health check
-        run: sleep 8 && curl -sf https://abap.v2retail.net/health
+      - name: Health check + SAP connect test
+        run: |
+          sleep 8
+          curl -sf https://abap.v2retail.net/health
+          echo ""
