@@ -1,0 +1,31 @@
+name: Emergency Deploy - SAP Modal Fix
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built worker from R2 and deploy to Cloudflare
+        run: |
+          # Download the pre-built worker (with SAP modal patch) from R2
+          curl -s -o /tmp/worker.js \
+            -H "Authorization: Bearer ${{ secrets.CF_DEPLOY_TOKEN }}" \
+            "https://api.cloudflare.com/client/v4/accounts/bab06c93e17ae71cae3c11b4cc40240b/r2/buckets/v2retail/objects/deploy/abap-studio-modal-fix.js"
+
+          echo "Worker size: $(wc -c < /tmp/worker.js) bytes"
+          head -c 100 /tmp/worker.js
+
+          # Deploy to Cloudflare using service-worker format
+          curl -s -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/bab06c93e17ae71cae3c11b4cc40240b/workers/scripts/abap-ai-studio" \
+            -H "Authorization: Bearer ${{ secrets.CF_DEPLOY_TOKEN }}" \
+            -H "Content-Type: application/javascript" \
+            --data-binary @/tmp/worker.js \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('Success:', d.get('success')); [print('Error:', e) for e in d.get('errors',[])]"
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -s https://abap.v2retail.net/health
