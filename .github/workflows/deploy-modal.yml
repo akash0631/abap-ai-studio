@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy worker with SAP modal patch
+      - name: Build and deploy fixed worker
         env:
           CF_R2_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
         run: python3 worker/src/deploy.py
