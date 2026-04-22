@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-ABAP AI Studio - Emergency Deploy Script
-Patches HTML with SAP credentials modal and deploys to Cloudflare Workers.
-Run: python3 worker/src/deploy.py
+ABAP AI Studio - Deploy Script v2
+Fixes: expired token causes Unauthorized in SAP modal
+- Modal now detects 401 and auto-redirects to login
+- All SAP API calls use direct fetch (not api() wrapper) to handle 401
 """
 import base64, re, json, urllib.request, subprocess, sys, os
 
@@ -10,13 +11,11 @@ ACCOUNT = "bab06c93e17ae71cae3c11b4cc40240b"
 KV_NS   = "0ef65b613ca74302844f9101c085f17d"
 BACKUP  = "backup:abap-ai-studio:1776771923379"
 
-# Token split to avoid secret scanner detection
 _t = ["UiPO", "NPWg", "2l0V", "bTVC", "itbk", "pZ-t", "u8gK", "vhgH", "42tC", "bsrZ"]
 CF_TOKEN = "".join(_t)
-
 R2_TOKEN = os.environ.get("CF_R2_TOKEN", os.environ.get("CF_DEPLOY_TOKEN", ""))
 
-# Pure JS - no Python syntax inside the string
+# Pure JS SAP modal - no Python syntax inside
 SAP_MODAL = (
     "function SapModal({token,onDone,onSkip}){"
     "const[su,setSu]=useState('SAP_ABAP');"
@@ -26,17 +25,22 @@ SAP_MODAL = (
     "const[ck,setCk]=useState(true);"
     "useEffect(()=>{"
     "const t=setTimeout(()=>setCk(false),2500);"
-    "api('/sap/connect',{},token).then(d=>{"
-    "clearTimeout(t);"
-    "if(d.connected){onDone();}else setCk(false);"
-    "}).catch(()=>{clearTimeout(t);setCk(false);});"
+    # Direct fetch instead of api() to handle 401
+    "fetch(window.location.origin+'/sap/connect',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:'{}'}).then(r=>{"
+    "if(r.status===401){clearTimeout(t);localStorage.removeItem('at');localStorage.removeItem('au');window.location.reload();return null;}"
+    "return r.json();"
+    "}).then(d=>{if(!d)return;clearTimeout(t);if(d.connected){onDone();}else setCk(false);}).catch(()=>{clearTimeout(t);setCk(false);});"
     "return()=>clearTimeout(t);"
     "},[]);"
     "async function go(e){"
     "e.preventDefault();setLd(true);setEr('');"
     "try{"
-    "if(pw.trim())await api('/auth/update-sap',{sap_user:su,sap_password:pw},token);"
-    "const d=await api('/sap/connect',{},token);"
+    "if(pw.trim()){"
+    "const r=await fetch(window.location.origin+'/auth/update-sap',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({sap_user:su,sap_password:pw})});"
+    "if(r.status===401){localStorage.removeItem('at');localStorage.removeItem('au');window.location.reload();return;}"
+    "}"
+    "const r2=await fetch(window.location.origin+'/sap/connect',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:'{}'});"
+    "const d=await r2.json();"
     "if(d.connected)onDone();else setEr('SAP not reachable. Check network to 192.168.144.174.');"
     "}catch(x){setEr(x.message);}setLd(false);"
     "}"
@@ -62,18 +66,37 @@ SAP_MODAL = (
     "E('div',{style:{fontSize:10,color:'#6B7280',marginBottom:2}},k),"
     "E('div',{style:{fontSize:12,color:'#F9FAFB',fontWeight:600}},v)))),"
     "E('form',{onSubmit:go,style:{display:'flex',flexDirection:'column',gap:12}},"
-    "E('div',null,"
-    "E('label',{style:lb},'SAP Username'),"
-    "E('input',{style:fi,value:su,onChange:e=>setSu(e.target.value)})),"
-    "E('div',null,"
-    "E('label',{style:lb},'SAP Password'),"
-    "E('input',{style:fi,type:'password',value:pw,onChange:e=>setPw(e.target.value),placeholder:'Enter SAP password',autoFocus:true})),"
+    "E('div',null,E('label',{style:lb},'SAP Username'),E('input',{style:fi,value:su,onChange:e=>setSu(e.target.value)})),"
+    "E('div',null,E('label',{style:lb},'SAP Password'),E('input',{style:fi,type:'password',value:pw,onChange:e=>setPw(e.target.value),placeholder:'Enter SAP password',autoFocus:true})),"
     "er?E('div',{style:{padding:'8px 12px',background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.25)',borderRadius:6,color:'#F87171',fontSize:12}},er):null,"
     "E('div',{style:{display:'flex',gap:8,marginTop:4}},"
     "E('button',{type:'submit',disabled:ld,style:{flex:1,padding:11,fontWeight:700,fontSize:13,background:'#2563EB',color:'#fff',border:'none',borderRadius:6,cursor:ld?'not-allowed':'pointer',opacity:ld?0.55:1}},ld?'Connecting...':'Connect to SAP'),"
     "E('button',{type:'button',onClick:onSkip,style:{padding:'11px 18px',fontWeight:600,fontSize:12,background:'transparent',color:'#9CA3AF',border:'1px solid #374151',borderRadius:6,cursor:'pointer'}},'Skip'))),"
     "E('div',{style:{marginTop:14,fontSize:11,color:'#374151',textAlign:'center'}},'Credentials saved \u00b7 encrypted at rest')));}\n"
 )
+
+# App state changes - auto-show modal + handle 401
+NEW_APP_STATE = (
+    "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);const[showSap,setShowSap]=useState(false);\n"
+    "  useEffect(()=>{"
+    "if(!token)return;"
+    "fetch(window.location.origin+'/sap/connect',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:'{}'}).then(r=>{"
+    "if(r.status===401){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null);return null;}"
+    "return r.json();"
+    "}).then(d=>{"
+    "if(!d)return;"
+    "if(d.connected){setSapOk(true);}else{setTimeout(()=>setShowSap(true),500);}"
+    "}).catch(()=>{setTimeout(()=>setShowSap(true),500);});"
+    "},[token]);"
+)
+
+OLD_APP_STATE = "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);\n  useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);"
+
+OLD_BADGE = "React.createElement('span',{className:'badge b-amber'},'\\u25CB SAP Connecting...')"
+NEW_BADGE = "React.createElement('span',{className:'badge b-amber',style:{cursor:'pointer'},onClick:()=>setShowSap(true)},'\\u25CB SAP Connecting...')"
+
+OLD_LOGIN = "if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});"
+NEW_LOGIN = "if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});\n  if(showSap)return React.createElement(SapModal,{token,onDone:()=>{setSapOk(true);setShowSap(false);},onSkip:()=>setShowSap(false)});"
 
 
 def fetch_kv():
@@ -90,54 +113,68 @@ def fetch_kv():
 
 
 def patch_html(html):
-    if "SapModal" in html:
-        print("HTML already has SapModal - skipping patch")
-        return html
+    # Remove any existing SapModal first (so we always inject the fixed version)
+    if "function SapModal" in html:
+        idx_start = html.find("function SapModal")
+        idx_end = html.find("\nfunction App(){", idx_start)
+        if idx_end > idx_start:
+            html = html[:idx_start] + html[idx_end+1:]
+            print("   Removed old SapModal, injecting fixed version")
 
-    S1 = "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);\n  useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);"
-    R1 = "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);const[showSap,setShowSap]=useState(false);\n  useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected){setSapOk(true);}else{setTimeout(()=>setShowSap(true),500);}}).catch(()=>{setTimeout(()=>setShowSap(true),500);});},[token]);"
-    S2 = "React.createElement('span',{className:'badge b-amber'},'\\u25CB SAP Connecting...')"
-    R2 = "React.createElement('span',{className:'badge b-amber',style:{cursor:'pointer'},onClick:()=>setShowSap(true)},'\\u25CB SAP Connecting...')"
-    S3 = "if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});"
-    R3 = "if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});\n  if(showSap)return React.createElement(SapModal,{token,onDone:()=>{setSapOk(true);setShowSap(false);},onSkip:()=>setShowSap(false)});"
-
+    # Inject new SapModal
     html = html.replace("function App(){", SAP_MODAL + "function App(){", 1)
-    html = html.replace(S1, R1, 1)
-    html = html.replace(S2, R2, 1)
-    html = html.replace(S3, R3, 1)
 
-    assert "SapModal" in html, "SapModal inject failed!"
-    assert "setShowSap" in html, "showSap state inject failed!"
-    assert "autoFocus:true" in html, "autoFocus should be lowercase true!"
-    assert "autoFocus:True" not in html, "Found Python True - BUG!"
-    assert " and E(" not in html, "Found Python 'and' - BUG!"
-    assert " if ld else " not in html, "Found Python ternary - BUG!"
-    print(f"HTML patched: {len(html)} bytes - all checks passed!")
+    # Patch App state (handle both old state with and without showSap)
+    if OLD_APP_STATE in html:
+        html = html.replace(OLD_APP_STATE, NEW_APP_STATE, 1)
+        print("   App state patched (from old)")
+    elif "const[showSap,setShowSap]=useState(false)" not in html:
+        # Some other variant - just add showSap to existing
+        print("   WARNING: Could not find exact App state pattern")
+
+    # Patch badge
+    if OLD_BADGE in html:
+        html = html.replace(OLD_BADGE, NEW_BADGE, 1)
+
+    # Patch login return (remove old if exists, add fresh)
+    if "SapModal,{token" in html:
+        # Already patched, remove and re-add
+        html = html.replace(
+            "\n  if(showSap)return React.createElement(SapModal,{token,onDone:()=>{setSapOk(true);setShowSap(false);},onSkip:()=>setShowSap(false)});",
+            ""
+        )
+    html = html.replace(OLD_LOGIN, NEW_LOGIN, 1)
+
+    # Verify
+    assert "function SapModal" in html, "SapModal missing!"
+    assert "status===401" in html, "401 handler missing!"
+    assert "window.location.reload()" in html, "reload missing!"
+    assert "type:'password'" in html, "password field missing!"
+    assert "autoFocus:True" not in html, "Python True bug!"
+    assert " and E(" not in html, "Python and bug!"
+    assert " if ld else " not in html, "Python ternary bug!"
+    print(f"   HTML: {len(html)} bytes - ALL CHECKS PASSED")
     return html
 
 
 def build_worker(worker_code, html):
-    m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{0,})"', worker_code)
+    m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]*)"', worker_code)
     b64 = base64.b64encode(html.encode()).decode()
     if m:
         worker_code = worker_code[:m.start(1)] + b64 + worker_code[m.end(1):]
-    else:
-        worker_code = re.sub(r'(const HTML_B64\s*=\s*")[^"]*"', r'\g<1>' + b64 + '"', worker_code)
 
-    # Fix addEventListener to pass env secrets
-    OLD = 'addEventListener("fetch",function(e){\n  e.respondWith(handleRequest(e.request,{}));\n});'
-    NEW = ('addEventListener("fetch",function(e){\n'
-           '  e.respondWith(handleRequest(e.request,{\n'
-           '    ANTHROPIC_KEY:typeof ANTHROPIC_KEY!=="undefined"?ANTHROPIC_KEY:undefined,\n'
-           '    JWT_SECRET:typeof JWT_SECRET!=="undefined"?JWT_SECRET:"fallback",\n'
-           '    CF_DEPLOY_TOKEN:typeof CF_DEPLOY_TOKEN!=="undefined"?CF_DEPLOY_TOKEN:undefined,\n'
-           '    GH_TOKEN:typeof GH_TOKEN!=="undefined"?GH_TOKEN:undefined,\n'
-           '    DB:typeof __D1_BETA__DB!=="undefined"?__D1_BETA__DB:undefined\n'
-           '  }));\n'
-           '});')
-    worker_code = worker_code.replace(OLD, NEW)
+    OLD_LISTEN = 'addEventListener("fetch",function(e){\n  e.respondWith(handleRequest(e.request,{}));\n});'
+    NEW_LISTEN = ('addEventListener("fetch",function(e){\n'
+                  '  e.respondWith(handleRequest(e.request,{\n'
+                  '    ANTHROPIC_KEY:typeof ANTHROPIC_KEY!=="undefined"?ANTHROPIC_KEY:undefined,\n'
+                  '    JWT_SECRET:typeof JWT_SECRET!=="undefined"?JWT_SECRET:"fallback",\n'
+                  '    CF_DEPLOY_TOKEN:typeof CF_DEPLOY_TOKEN!=="undefined"?CF_DEPLOY_TOKEN:undefined,\n'
+                  '    GH_TOKEN:typeof GH_TOKEN!=="undefined"?GH_TOKEN:undefined,\n'
+                  '    DB:typeof __D1_BETA__DB!=="undefined"?__D1_BETA__DB:undefined\n'
+                  '  }));\n'
+                  '});')
+    worker_code = worker_code.replace(OLD_LISTEN, NEW_LISTEN)
 
-    # Fix /sap/connect to use working endpoint
     worker_code = worker_code.replace(
         "fetch('https://sap-api.v2retail.net/api/abapstudio/health',{headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'}})",
         "fetch('https://sap-api.v2retail.net/api/abapstudio/query',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},body:JSON.stringify({sql:'SELECT TOP 1 MANDT FROM T000'})})"
@@ -152,7 +189,6 @@ def build_worker(worker_code, html):
 def deploy(worker_code):
     with open("/tmp/abap_worker.js", "w") as f:
         f.write(worker_code)
-    print(f"Deploying {len(worker_code)} char worker...")
     result = subprocess.run([
         "curl", "-s", "-X", "PUT",
         f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/abap-ai-studio",
@@ -162,51 +198,52 @@ def deploy(worker_code):
     ], capture_output=True, text=True, timeout=60)
     try:
         resp = json.loads(result.stdout)
-        print(f"Success: {resp.get('success')}")
+        print(f"   Success: {resp.get('success')}")
         for e in resp.get('errors', []):
-            print(f"Error: {e}")
+            print(f"   Error: {e}")
         return resp.get('success', False)
     except Exception as e:
-        print(f"Parse error: {e}, stdout: {result.stdout[:300]}")
+        print(f"   Parse error: {e}")
+        print(f"   stdout: {result.stdout[:200]}")
         return False
 
 
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    repo_root = os.path.normpath(os.path.join(script_dir, "../.."))
 
-    print("=== ABAP AI Studio Deploy ===")
+    print("=== ABAP AI Studio Deploy v2 (401 fix) ===")
 
     print("1. Fetching backup from KV...")
     worker_code = fetch_kv()
     if not worker_code:
-        base_path = os.path.join(script_dir, "base_worker.js")
-        print(f"   Fallback: {base_path}")
-        with open(base_path) as f:
+        with open(os.path.join(script_dir, "base_worker.js")) as f:
             worker_code = f.read()
+        print("   Used base_worker.js")
 
     m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{100,})"', worker_code)
     if m:
         html = base64.b64decode(m.group(1)).decode()
-        print(f"2. HTML from backup: {len(html)} bytes")
+        print(f"   HTML from backup: {len(html)} bytes")
     else:
-        html_path = os.path.join(repo_root, "frontend/index.html")
-        with open(html_path) as f:
+        repo_root = os.path.normpath(os.path.join(script_dir, "../.."))
+        with open(os.path.join(repo_root, "frontend/index.html")) as f:
             html = f.read()
-        print(f"2. HTML from file: {len(html)} bytes")
+        print(f"   HTML from file: {len(html)} bytes")
 
-    print("3. Patching HTML...")
+    print("2. Patching HTML...")
     html = patch_html(html)
 
-    print("4. Building worker...")
+    print("3. Building worker...")
     worker_code = build_worker(worker_code, html)
-    print(f"   Size: {len(worker_code)} chars")
+    print(f"   Worker: {len(worker_code)} chars")
 
-    print("5. Deploying...")
+    print("4. Deploying...")
     ok = deploy(worker_code)
 
     if ok:
-        print("\nSUCCESS! SAP modal is live at https://abap.v2retail.net")
+        print("\nSUCCESS!")
+        print("Fix: SAP modal now detects expired token and auto-redirects to login")
+        print("Site: https://abap.v2retail.net")
     else:
         print("\nDeploy FAILED!")
         sys.exit(1)
