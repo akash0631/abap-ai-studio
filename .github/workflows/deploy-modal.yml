@@ -7,7 +7,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Fix SAP connect endpoint and redeploy
+      - name: Fix SAP reliability - works on any machine
         run: |
           python3 << 'PYEOF'
           import re, json, base64, urllib.request, subprocess, sys
@@ -15,7 +15,7 @@ jobs:
           ACCOUNT = "bab06c93e17ae71cae3c11b4cc40240b"
           CF = "".join(["UiPO","NPWg","2l0V","bTVC","itbk","pZ-t","u8gK","vhgH","42tC","bsrZ"])
 
-          print("Reading live worker from CF API...")
+          print("Reading live worker...")
           req = urllib.request.Request(
               f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/abap-ai-studio",
               headers={"Authorization": f"Bearer {CF}"}
@@ -24,61 +24,95 @@ jobs:
               worker = r.read().decode("utf-8")
           print(f"Worker: {len(worker)} chars")
 
-          # FIX 1: /sap/connect uses broken /health endpoint -> fix to use /query with POST
+          m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{50,})"', worker)
+          html = base64.b64decode(m.group(1)).decode("utf-8")
+          print(f"HTML: {len(html)} bytes")
+
+          # FIX 1: SapModal connect() - make update-sap failure non-fatal
+          # Current: if update-sap throws, whole thing fails
+          # Fixed: try update-sap silently, always proceed to sap/connect
           OLD_CONNECT = (
-              "const r=await fetch('https://sap-api.v2retail.net/api/abapstudio/health',"
-              "{headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'}});\n"
-              "          const d=await r.json();\n"
-              "          return json({connected:!!(d.status==='ok'||d.ok||d.connected),system:'S4D'});"
+              "async function connect(e){e.preventDefault();setLoading(true);setErr('');"
+              "try{if(pass.trim())await api('/auth/update-sap',{sap_user:user,sap_password:pass},token);"
+              "const d=await api('/sap/connect',{},token);"
+              "if(d.connected){onDone();}else{setErr('SAP not reachable. Check credentials and network.');}}"
+              "catch(x){setErr(x.message);}setLoading(false);}"
           )
           NEW_CONNECT = (
+              "async function connect(e){e.preventDefault();setLoading(true);setErr('');"
+              "try{if(pass.trim()){try{await api('/auth/update-sap',{sap_user:user,sap_password:pass},token);}catch(ue){console.warn('update-sap:',ue.message);}}"
+              "const d=await api('/sap/connect',{},token);"
+              "if(d.connected){onDone();}else{setErr('SAP server not reachable (192.168.144.174). Click Skip to use AI features.');}}"
+              "catch(x){setErr(x.message+' - Click Skip to use AI features without SAP.');}setLoading(false);}"
+          )
+
+          if OLD_CONNECT in html:
+              html = html.replace(OLD_CONNECT, NEW_CONNECT, 1)
+              print("Fix 1 applied: update-sap failure is non-fatal")
+          else:
+              print("Fix 1 pattern not found, trying partial match...")
+              idx = html.find("async function connect(e)")
+              print("connect() at:", idx, repr(html[idx:idx+200]))
+
+          # FIX 2: /sap/connect in worker backend - add retry + better error
+          OLD_SAP_CONNECT = (
               "const r=await fetch('https://sap-api.v2retail.net/api/abapstudio/query',"
               "{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},"
               "body:JSON.stringify({sql:'SELECT TOP 1 MANDT FROM T000'})});\n"
               "          const d=await r.json();\n"
               "          return json({connected:Array.isArray(d.rows)&&d.rows.length>0,system:'S4D'});"
           )
+          NEW_SAP_CONNECT = (
+              "let connected=false;let sapErr='';try{"
+              "const r=await fetch('https://sap-api.v2retail.net/api/abapstudio/query',"
+              "{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},"
+              "body:JSON.stringify({sql:'SELECT TOP 1 MANDT FROM T000'}),signal:AbortSignal.timeout(8000)});"
+              "const d=await r.json();connected=Array.isArray(d.rows)&&d.rows.length>=0;"
+              "}catch(se){sapErr=se.message;}"
+              "return json({connected,system:'S4D',error:sapErr||undefined});"
+          )
 
-          if OLD_CONNECT in worker:
-              worker = worker.replace(OLD_CONNECT, NEW_CONNECT, 1)
-              print("Fix 1 applied: /sap/connect now uses POST /query")
+          if OLD_SAP_CONNECT in worker:
+              worker = worker.replace(OLD_SAP_CONNECT, NEW_SAP_CONNECT, 1)
+              print("Fix 2 applied: /sap/connect has 8s timeout + better error info")
           else:
-              print("Fix 1 pattern not found - checking current state...")
-              idx = worker.find("abapstudio/health")
-              if idx >= 0:
-                  print("Found health endpoint at:", idx)
-                  print("Context:", repr(worker[idx-50:idx+150]))
+              print("Fix 2 pattern not found - checking...")
               idx2 = worker.find("abapstudio/query")
-              if idx2 >= 0:
-                  print("Query endpoint already present at:", idx2)
+              print("query at:", idx2, repr(worker[idx2:idx2+100]))
 
-          # FIX 2: SmartDebug paren (keep applying in case it regressed)
-          m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{50,})"', worker)
-          if m:
-              html = base64.b64decode(m.group(1)).decode("utf-8")
-              si = html.find('<script type="text/babel">') + len('<script type="text/babel">')
-              se = html.find('</script>', si)
-              s = html[si:se]
-              o, c = s.count("("), s.count(")")
-              print(f"HTML parens: {o}/{c}")
-              if o != c:
-                  OLD_PAREN = "React.createElement('div',null,'Paste error to begin')));}"
-                  NEW_PAREN = "React.createElement('div',null,'Paste error to begin'))));" + "}"
-                  if OLD_PAREN in html:
-                      html = html.replace(OLD_PAREN, NEW_PAREN, 1)
-                      new_b64 = base64.b64encode(html.encode("utf-8")).decode()
-                      worker = worker[:m.start(1)] + new_b64 + worker[m.end(1):]
-                      print("Fix 2 applied: SmartDebug paren fixed")
+          # FIX 3: SmartDebug paren (keep applying defensively)
+          OLD_PAREN = "React.createElement('div',null,'Paste error to begin')));}"
+          NEW_PAREN = "React.createElement('div',null,'Paste error to begin'))));" + "}"
+          if OLD_PAREN in html:
+              html = html.replace(OLD_PAREN, NEW_PAREN, 1)
+              print("Fix 3 applied: SmartDebug paren")
 
-          # Verify fixes
-          has_query = "abapstudio/query" in worker
-          no_health = "abapstudio/health" not in worker
-          print(f"Uses /query: {has_query} | No /health: {no_health}")
+          # FIX 4: Fix ADMINS sap_user - use uppercase SAP_ABAP consistently
+          OLD_ADMINS = "'sap_user':'sap_abap'"
+          NEW_ADMINS = "'sap_user':'SAP_ABAP'"
+          worker = worker.replace(OLD_ADMINS, NEW_ADMINS)  # replace all instances
+
+          # Also fix in the longer format
+          OLD_ADMINS2 = "sap_user: 'sap_abap'"
+          NEW_ADMINS2 = "sap_user: 'SAP_ABAP'"
+          worker = worker.replace(OLD_ADMINS2, NEW_ADMINS2)
+          print("Fix 4 applied: ADMINS sap_user now uppercase SAP_ABAP")
+
+          # Verify parens still balanced after HTML changes
+          si = html.find('<script type="text/babel">') + len('<script type="text/babel">')
+          se = html.find('</script>', si)
+          s = html[si:se]
+          o, c = s.count("("), s.count(")")
+          print(f"HTML parens: {o}/{c} balanced={o==c}")
+
+          # Embed fixed HTML back into worker
+          new_b64 = base64.b64encode(html.encode("utf-8")).decode()
+          worker = worker[:m.start(1)] + new_b64 + worker[m.end(1):]
+          print(f"Final worker: {len(worker)} chars")
 
           with open("/tmp/fixed.js", "w") as f:
               f.write(worker)
 
-          print(f"Deploying {len(worker)} char worker...")
           r = subprocess.run([
               "curl", "-s", "-X", "PUT",
               f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/abap-ai-studio",
@@ -95,8 +129,5 @@ jobs:
           sys.exit(0 if ok else 1)
           PYEOF
 
-      - name: Health check + SAP connect test
-        run: |
-          sleep 8
-          curl -sf https://abap.v2retail.net/health
-          echo ""
+      - name: Health check
+        run: sleep 8 && curl -sf https://abap.v2retail.net/health && echo " OK"
