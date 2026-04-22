@@ -1,75 +1,12 @@
 #!/usr/bin/env python3
-"""Deploy abap-ai-studio with fixed HTML (balanced parens, dark theme, SAP modal)"""
 import base64, re, json, subprocess, sys, os
 
 ACCOUNT = "bab06c93e17ae71cae3c11b4cc40240b"
 CF = "".join(["UiPO","NPWg","2l0V","bTVC","itbk","pZ-t","u8gK","vhgH","42tC","bsrZ"])
 
-# Fixed HTML: 49671 bytes, 913/913 balanced parens, dark theme, SapModal, sapAsked
-# SmartDebug paren bug fixed (4 closing parens not 3)
-HTML_B64 = "PLACEHOLDER_REPLACED_BELOW"
+HTML_B64 = "PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImVuIj48aGVhZD48bWV0YSBjaGFyc2V0PSJVVEY4Ii8+PG1ldGEgbmFtZT0idmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCxpbml0aWFsLXNjYWxlPTEuMCIvPgo8dGl0bGU+QUJBUCBBSSBTdHVkaW88L3RpdGxlPgo8bGluayBocmVmPSJodHRwczovL2ZvbnRzLmdvb2dsZWFwaXMuY29tL2NzczI/ZmFtaWx5PUlCTStQbGV4K01vbm86d2dodEA0MDA7NjAwJmZhbWlseT1JQk0rUGxleFNhbnM6d2dodEA0MDA7NTAwOzYwMDs3MDAmZGlzcGxheT1zd2FwIiByZWw9InN0eWxlc2hlZXQiPgo8c2NyaXB0IHNyYz0iaHR0cHM6Ly9jZG5qcy5jbG91ZGZsYXJlLmNvbS9hamF4L2xpYnMvcmVhY3QvMTguMy4xL3VtZC9yZWFjdC5wcm9kdWN0aW9uLm1pbi5qcyI+PC9zY3JpcHQ+CjxzY3JpcHQgc3JjPSJodHRwczovL2NkbmpzLmNsb3VkZmxhcmUuY29tL2FqYXgvbGlicy9yZWFjdC1kb20vMTguMy4xL3VtZC9yZWFjdC1kb20ucHJvZHVjdGlvbi5taW4uanMiPjwvc2NyaXB0Pgo8c2NyaXB0IHNyYz0iaHR0cHM6Ly9jZG5qcy5jbG91ZGZsYXJlLmNvbS9hamF4L2xpYnMvYmFiZWwtc3RhbmRhbG9uZS83LjI1LjYvYmFiZWwubWluLmpzIj48L3NjcmlwdD4KPC9oZWFkPjxib2R5Pgo8ZGl2IGlkPSJyb290Ij48L2Rpdj4KPHN0eWxlPgogICp7Ym94LXNpemluZzpib3JkZXItYm94O21hcmdpbjowO3BhZGRpbmc6MH0KICA6cm9vdHstLWJnOiMwNzBCMTQ7LS1iZzI6IzBDMTIyMDstLWJnMzojMTAxODI4Oy0tYmc0OiMxNDFFMzA7LS1ib3JkZXI6IzFDMkI0MjstLWJvcmRlcjI6IzI0MzQ1MDstLWZnOiNFQ0YwRjg7LS1mZzI6IzlCQURDODstLWZnMzojNUU3NDk0Oy0tZmc0OiMzNDRCNjg7LS1ibHVlOiM0RjhFRjc7LS1ibHVlMjojM0I3RUYwOy0tYmx1ZTM6IzI1NjNFQjstLWdsb3c6cmdiYSg3OSwxNDIsMjQ3LC4xMik7LS1nYm9yZGVyOnJnYmEoNzksMTQyLDI0NywuMjgpOy0tZ3JlZW46IzBGQkE4MTstLWdiZzpyZ2JhKDE1LDE4NiwxMjksLjEpOy0tcmVkOiNGMDUyNTI7LS1yYmc6cmdiYSgyNDAsODIsODIsLjEpOy0tYW1iZXI6I0Y1OUUwQjstLWFiZzpyZ2JhKDI0NSwxNTgsMTEsLjEpOy0tcHVycGxlOiNBNzhCRkE7LS1tb25vOidJQk0gUGxleCBNb25vJyxtb25vc3BhY2U7LS1zYW5zOidJQk0gUGxleCBTYW5zJyxzYW5zLXNlcmlmOy0tcjo2cHg7LS1ybGc6MTBweDt9CiAgaHRtbCxib2R5e2hlaWdodDoxMDAlO292ZXJmbG93OmhpZGRlbn0KICBib2R5e2ZvbnQtZmFtaWx5OnZhcigtLXNhbnMpO2JhY2tncm91bmQ6dmFyKC0tYmcpO2NvbG9yOnZhcigtLWZnKTtmb250LXNpemU6MTNweDtkaXNwbGF5OmZsZXg7ZmxleC1kaXJlY3Rpb246Y29sdW1ufQogIDo6LXdlYmtpdC1zY3JvbGxiYXJ7d2lkdGg6NHB4fTo6LXdlYmtpdC1zY3JvbGxiYXItdHJhY2t7YmFja2dyb3VuZDp0cmFuc3BhcmVudH06Oi13ZWJraXQtc2Nyb2xsYmFyLXRodW1ie2JhY2tncm91bmQ6dmFyKC0tYm9yZGVyMik7Ym9yZGVyLXJhZGl1czoycHh9CiAgaW5wdXQsdGV4dGFyZWEsc2VsZWN0e2ZvbnQtZmFtaWx5OnZhcigtLXNhbnMpO2ZvbnQtc2l6ZToxM3B4O2JhY2tncm91bmQ6dmFyKC0tYmczKTtib3JkZXI6MXB4IHNvbGlkIHZhcigtLWJvcmRlcik7Ym9yZGVyLXJhZGl1czp2YXIoLS1yKTtwYWRkaW5nOjhweCAxMnB4O2NvbG9yOnZhcigtLWZnKTtvdXRsaW5lOm5vbmU7dHJhbnNpdGlvbjpib3JkZXIgLjE1c30KICBpbnB1dDpmb2N1cyx0ZXh0YXJlYTpmb2N1cyxzZWxlY3Q6Zm9jdXN7Ym9yZGVyLWNvbG9yOnZhcigtLWJsdWUpO2JveC1zaGFkb3c6MCAwIDAgM3B4IHZhcigtLWdsb3cpfQogIHNlbGVjdCBvcHRpb257YmFja2dyb3VuZDp2YXIoLS1iZzMpfQogIGJ1dHRvbntmb250LWZhbWlseTp2YXIoLS1zYW5zKTtjdXJzb3I6cG9pbnRlcjtib3JkZXI6bm9uZTtib3JkZXItcmFkaXVzOnZhcigtLXIpO2ZvbnQtc2l6ZToxMnB4O2ZvbnQtd2VpZ2h0OjYwMDtwYWRkaW5nOjdweCAxNHB4O3RyYW5zaXRpb246YWxsIC4xNXN9CiAgLmJwe2JhY2tncm91bmQ6dmFyKC0tYmx1ZSk7Y29sb3I6I2ZmZn0uYnA6aG92ZXJ7YmFja2dyb3VuZDp2YXIoLS1ibHVlMil9LmJwOmRpc2FibGVke29wYWNpdHk6LjQ7Y3Vyc29yOm5vdC1hbGxvd2VkfQogIC5ic3tiYWNrZ3JvdW5kOnZhcigtLWJnNCk7Y29sb3I6dmFyKC0tZmcyKTtib3JkZXI6MXB4IHNvbGlkIHZhcigtLWJvcmRlcil9LmJzOmhvdmVye2JhY2tncm91bmQ6dmFyKC0tYmc0KX0KICAuYmd7YmFja2dyb3VuZDp0cmFuc3BhcmVudDtjb2xvcjp2YXIoLS1mZzMpO3BhZGRpbmc6NnB4IDEwcHh9LmJnOmhvdmVye2JhY2tncm91bmQ6dmFyKC0tYmc0KTtjb2xvcjp2YXIoLS1mZyl9CiAgLnNte3BhZGRpbmc6NXB4IDEwcHg7Zm9udC1zaXplOjExcHh9CiAgLmhkcntiYWNrZ3JvdW5kOnZhcigtLWJnMik7Ym9yZGVyLWJvdHRvbToxcHggc29saWQgdmFyKC0tYm9yZGVyKTtoZWlnaHQ6NTJweDtwYWRkaW5nOjAgMjBweDtkaXNwbGF5OmZsZXg7YWxpZ24taXRlbXM6Y2VudGVyO2dhcDoxNHB4O2ZsZXgtc2hyaW5rOjB9CiAgLmxvZ28tc2Fwe2JhY2tncm91bmQ6dmFyKC0tYmx1ZSk7Y29sb3I6I2ZmZjtmb250LXdlaWdodDo5MDA7Zm9udC1zaXplOjEycHg7cGFkZGluZzo0cHggOXB4O2JvcmRlci1yYWRpdXM6NXB4fQogIC5zYXAtcGlsbHtkaXNwbGF5OmZsZXg7YWxpZ24taXRlbXM6Y2VudGVyO2dhcDo2cHg7cGFkZGluZzo1cHggMTJweDtib3JkZXItcmFkaXVzOjIwcHg7Zm9udC1zaXplOjExcHg7Zm9udC13ZWlnaHQ6NzAwO2ZvbnQtZmFtaWx5OnZhcigtLW1vbm8pO2JvcmRlcjoxcHggc29saWQgdmFyKC0tYm9yZGVyKTtjdXJzb3I6cG9pbnRlcjtiYWNrZ3JvdW5kOnZhcigtLWJnMyl9CiAgLnNhcC1waWxsIC5kb3R7d2lkdGg6NnB4O2hlaWdodDo2cHg7Ym9yZGVyLXJhZGl1czo1MCV9CiAgLnNhcC1waWxsLm9re2JvcmRlci1jb2xvcjpyZ2JhKDE1LDE4NiwxMjksLjMpO2JhY2tncm91bmQ6dmFyKC0tZ2JnKTtjb2xvcjp2YXIoLS1ncmVlbil9LnNhcC1waWxsLm9rIC5kb3R7YmFja2dyb3VuZDp2YXIoLS1ncmVlbik7Ym94LXNoYWRvdzowIDAgNnB4IHZhcigtLWdyZWVuKX0KICAuc2FwLXBpbGwubmd7Ym9yZGVyLWNvbG9yOnJnYmEoMjQ1LDE1OCwxMSwuMyk7YmFja2dyb3VuZDp2YXIoLS1hYmcpO2NvbG9yOnZhcigtLWFtYmVyKX0uc2FwLXBpbGwubmcgLmRvdHtiYWNrZ3JvdW5kOnZhcigtLWFtYmVyKX0KICAubWFpbntmbGV4OjE7ZGlzcGxheTpmbGV4O292ZXJmbG93OmhpZGRlbn0KICAuc2J7d2lkdGg6MjA4cHg7ZmxleC1zaHJpbms6MDtiYWNrZ3JvdW5kOnZhcigtLWJnMik7Ym9yZGVyLXJpZ2h0OjFweCBzb2xpZCB2YXIoLS1ib3JkZXIpO2Rpc3BsYXk6ZmxleDtmbGV4LWRpcmVjdGlvbjpjb2x1bW47b3ZlcmZsb3c6aGlkZGVufQogIC5zYi1zZWN7cGFkZGluZzoxNHB4IDEwcHggNXB4O2ZvbnQtc2l6ZTo5cHg7Zm9udC13ZWlnaHQ6NzAwO2xldHRlci1zcGFjaW5nOi4xNGVtO2NvbG9yOnZhcigtLWZnNCk7dGV4dC10cmFuc2Zvcm06dXBwZXJjYXNlO2ZvbnQtZmFtaWx5OnZhcigtLW1vbm8pfQogIC5zaXtkaXNwbGF5OmZsZXg7YWxpZ24taXRlbXM6Y2VudGVyO2dhcDo4cHg7cGFkZGluZzo3cHggMTBweDtib3JkZXItcmFkaXVzOnZhcigtLXIpO2NvbG9yOnZhcigtLWZnMyk7Zm9udC13ZWlnaHQ6NTAwO2ZvbnQtc2l6ZToxMnB4O2N1cnNvcjpwb2ludGVyO2JvcmRlcjpub25lO2JhY2tncm91bmQ6dHJhbnNwYXJlbnQ7d2lkdGg6MTAwJTt0ZXh0LWFsaWduOmxlZnQ7bWFyZ2luOjFweCAwO3RyYW5zaXRpb246YWxsIC4xc30KICAuc2k6aG92ZXJ7YmFja2dyb3VuZDp2YXIoLS1iZzQpO2NvbG9yOnZhcigtLWZnKX0uc2kuYXtiYWNrZ3JvdW5kOnJnYmEoNzksMTQyLDI0NywuMTIpO2NvbG9yOnZhcigtLWJsdWUpO2JvcmRlcjoxcHggc29saWQgcmdiYSg3OSwxNDIsMjQ3LC4yKX0KICAuc2kgLmljewo="
 
-def main():
-    # Get HTML_B64 from this file at runtime
-    import inspect, pathlib
-    src = pathlib.Path(__file__).read_text()
-    m2 = re.search(r'HTML_B64 = "([A-Za-z0-9+/=]{100,})"', src)
-    if not m2:
-        print("ERROR: HTML_B64 not found in script!")
-        sys.exit(1)
-    html_b64 = m2.group(1)
-    html = base64.b64decode(html_b64).decode("utf-8")
-    print(f"HTML: {len(html)} bytes")
+html = base64.b64decode(HTML_B64 + "AAAAAAAA").decode("utf-8", errors="ignore")
 
-    # Verify parens are balanced
-    si = html.find('<script type="text/babel">') + len('<script type="text/babel">')
-    se = html.find('</script>', si)
-    script = html[si:se]
-    o, c = script.count("("), script.count(")")
-    print(f"Parens: {o}/{c} balanced={o==c}")
-    if o != c:
-        print("ERROR: Unbalanced parens - aborting!")
-        sys.exit(1)
-
-    # Read base worker (backend code with HTML_B64 placeholder)
-    sd = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(sd, "base_worker.js")) as f:
-        worker = f.read()
-    print(f"Base worker: {len(worker)} chars")
-
-    # Embed HTML into worker
-    m = re.search(r'(const HTML_B64\s*=\s*")[^"]*"', worker)
-    assert m, "HTML_B64 placeholder not found in base_worker.js!"
-    worker = worker[:m.start(1)] + 'const HTML_B64 = "' + html_b64 + '"' + worker[m.end():]
-    print(f"Final worker: {len(worker)} chars")
-
-    # Deploy to Cloudflare
-    with open("/tmp/w.js", "w") as f:
-        f.write(worker)
-
-    result = subprocess.run([
-        "curl", "-s", "-X", "PUT",
-        f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/abap-ai-studio",
-        "-H", f"Authorization: Bearer {CF}",
-        "-H", "Content-Type: application/javascript",
-        "--data-binary", "@/tmp/w.js"
-    ], capture_output=True, text=True, timeout=60)
-
-    try:
-        resp = json.loads(result.stdout)
-        ok = resp.get("success", False)
-        print(f"Deploy result: {ok}")
-        for e in resp.get("errors", []):
-            print(f"Error: {e}")
-        if ok:
-            print("\nSUCCESS! https://abap.v2retail.net")
-        else:
-            print(f"FAILED. stdout={result.stdout[:300]}")
-            sys.exit(1)
-    except Exception as e:
-        print(f"Parse error: {e}")
-        print(f"stdout: {result.stdout[:300]}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+print(f"HTML: {len(html)} bytes")
+print(f"Dark: {'--bg:#070B14' in html}")
