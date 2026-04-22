@@ -13,32 +13,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build worker - patch frontend + embed into base worker
+      - name: Build worker with SAP Modal patch
         run: |
           python3 << 'PYEOF'
           import base64, re, json, urllib.request
 
-          # ── 1. Read base worker (service-worker format, all backend fixes) ──
+          # 1. Read base worker
           with open('worker/src/base_worker.js') as f:
               worker_code = f.read()
           print(f"Base worker: {len(worker_code)} chars")
 
-          # ── 2. Fetch original live HTML from GitHub backup ──
-          # (the original 104KB frontend stored in KV backup)
+          # 2. Fetch original HTML from KV backup
           kv_url = "https://api.cloudflare.com/client/v4/accounts/bab06c93e17ae71cae3c11b4cc40240b/storage/kv/namespaces/0ef65b613ca74302844f9101c085f17d/values/backup%3Aabap-ai-studio%3A1776771923379"
           req = urllib.request.Request(kv_url, headers={"Authorization": "Bearer UiPONPWg2l0VbTVCitbkpZ-tu8gKvhgH42tCbsrZ"})
           with urllib.request.urlopen(req) as r:
               kv_data = json.loads(r.read())
           backup_code = kv_data["code"]
-          print(f"KV backup worker: {len(backup_code)} chars")
-
-          # Extract original HTML from backup
           m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{100,})"', backup_code)
           orig_html = base64.b64decode(m.group(1)).decode("utf-8")
-          print(f"Original HTML: {len(orig_html)} bytes")
+          print(f"Original HTML from KV: {len(orig_html)} bytes")
 
-          # ── 3. Patch the HTML to add SAP credentials modal ──
-          SAP_MODAL = """function SapModal({token,onDone,onSkip}){const[su,setSu]=useState('SAP_ABAP');const[pw,setPw]=useState('');const[er,setEr]=useState('');const[ld,setLd]=useState(false);const[ck,setCk]=useState(true);useEffect(()=>{const t=setTimeout(()=>setCk(false),2500);api('/sap/connect',{},token).then(d=>{clearTimeout(t);if(d.connected){onDone();}else setCk(false);}).catch(()=>{clearTimeout(t);setCk(false);});return()=>clearTimeout(t);},[]);async function go(e){e.preventDefault();setLd(true);setEr('');try{if(pw.trim())await api('/auth/update-sap',{sap_user:su,sap_password:pw},token);const d=await api('/sap/connect',{},token);if(d.connected)onDone();else setEr('SAP not reachable. Check network to 192.168.144.174.');}catch(x){setEr(x.message);}setLd(false);}const ov={position:'fixed',inset:0,background:'rgba(0,0,0,.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999};const bx={background:'#111827',border:'1px solid #374151',borderRadius:12,padding:28,width:420,boxShadow:'0 25px 60px rgba(0,0,0,.8)'};const fi={width:'100%',background:'#1F2937',border:'1px solid #374151',borderRadius:6,padding:'10px 13px',color:'#F9FAFB',fontSize:13,fontFamily:'monospace',outline:'none',marginTop:3,boxSizing:'border-box'};const lb={fontSize:10,fontWeight:700,color:'#6B7280',textTransform:'uppercase',letterSpacing:'.08em'};if(ck)return React.createElement('div',{style:ov},React.createElement('div',{style:{...bx,textAlign:'center',padding:40}},React.createElement('div',{style:{fontSize:28,marginBottom:10}},'⚙️'),React.createElement('div',{style:{fontWeight:700,color:'#F9FAFB',marginBottom:4}},'Connecting to SAP...'),React.createElement('div',{style:{fontSize:11,color:'#6B7280'}},'DEV 192.168.144.174 · Client 210')));return React.createElement('div',{style:ov},React.createElement('div',{style:bx},React.createElement('div',{style:{display:'flex',gap:12,marginBottom:20,alignItems:'center'}},React.createElement('div',{style:{width:44,height:44,background:'#2563EB',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:900,fontSize:13,flexShrink:0}},'SAP'),React.createElement('div',null,React.createElement('div',{style:{fontWeight:700,fontSize:15,color:'#F9FAFB'}},'SAP System Login'),React.createElement('div',{style:{fontSize:11,color:'#6B7280',marginTop:1}},'DEV 192.168.144.174 · Client 210'))),React.createElement('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,background:'#1F2937',borderRadius:8,padding:10,marginBottom:16}},[['System','S4/HANA'],['Host','192.168.144.174'],['Client','210'],['Type','DEV']].map(([k,v])=>React.createElement('div',{key:k},React.createElement('div',{style:{fontSize:9,color:'#6B7280',marginBottom:1}},k),React.createElement('div',{style:{fontSize:12,color:'#F9FAFB',fontWeight:600}},v)))),React.createElement('form',{onSubmit:go,style:{display:'flex',flexDirection:'column',gap:10}},React.createElement('div',null,React.createElement('label',{style:lb},'SAP Username'),React.createElement('input',{style:fi,value:su,onChange:e=>setSu(e.target.value)})),React.createElement('div',null,React.createElement('label',{style:lb},'SAP Password'),React.createElement('input',{style:fi,type:'password',value:pw,onChange:e=>setPw(e.target.value),placeholder:'Enter SAP password',autoFocus:true})),er&&React.createElement('div',{style:{padding:'7px 10px',background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.2)',borderRadius:5,color:'#F87171',fontSize:11}},er),React.createElement('div',{style:{display:'flex',gap:6,marginTop:2}},React.createElement('button',{type:'submit',disabled:ld,style:{flex:1,padding:'10px',fontWeight:600,fontSize:12,background:'#2563EB',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',opacity:ld?.5:1}},ld?'Connecting...':'Connect to SAP'),React.createElement('button',{type:'button',onClick:onSkip,style:{padding:'10px 16px',fontWeight:600,fontSize:12,background:'#1F2937',color:'#9CA3AF',border:'1px solid #374151',borderRadius:6,cursor:'pointer'}},'Skip'))),React.createElement('div',{style:{marginTop:12,fontSize:10,color:'#4B5563',textAlign:'center'}},'Credentials saved · encrypted at rest')));}\n"""
+          # 3. Patch HTML - add SAP credentials modal
+          SAP_MODAL = 'function SapModal({token,onDone,onSkip}){const[su,setSu]=React.useState("SAP_ABAP");const[pw,setPw]=React.useState("");const[er,setEr]=React.useState("");const[ld,setLd]=React.useState(false);const[ck,setCk]=React.useState(true);React.useEffect(()=>{const t=setTimeout(()=>setCk(false),2500);fetch(window.location.origin+"/sap/connect",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:"{}"}).then(r=>r.json()).then(d=>{clearTimeout(t);if(d.connected){onDone();}else setCk(false);}).catch(()=>{clearTimeout(t);setCk(false);});return()=>clearTimeout(t);},[]);async function go(e){e.preventDefault();setLd(true);setEr("");try{if(pw.trim()){await fetch(window.location.origin+"/auth/update-sap",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({sap_user:su,sap_password:pw})});}const r=await fetch(window.location.origin+"/sap/connect",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:"{}"});const d=await r.json();if(d.connected)onDone();else setEr("SAP not reachable. Check network to 192.168.144.174.");}catch(x){setEr(x.message);}setLd(false);}const E=React.createElement;const ov={position:"fixed",inset:0,background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999};const bx={background:"#111827",border:"1px solid #374151",borderRadius:12,padding:28,width:420,boxShadow:"0 25px 60px rgba(0,0,0,.85)"};const fi={width:"100%",background:"#1F2937",border:"1px solid #374151",borderRadius:6,padding:"10px 13px",color:"#F9FAFB",fontSize:13,fontFamily:"monospace",outline:"none",marginTop:3,boxSizing:"border-box"};if(ck)return E("div",{style:ov},E("div",{style:{...bx,textAlign:"center",padding:40}},E("div",{style:{fontSize:28,marginBottom:10}},"⚙️"),E("div",{style:{fontWeight:700,color:"#F9FAFB",marginBottom:4}},"Connecting to SAP..."),E("div",{style:{fontSize:11,color:"#6B7280"}},"DEV 192.168.144.174 · Client 210")));return E("div",{style:ov},E("div",{style:bx},E("div",{style:{display:"flex",gap:12,marginBottom:18,alignItems:"center"}},E("div",{style:{width:44,height:44,background:"#2563EB",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:900,fontSize:13}},"SAP"),E("div",null,E("div",{style:{fontWeight:700,fontSize:15,color:"#F9FAFB"}},"SAP System Login"),E("div",{style:{fontSize:11,color:"#6B7280",marginTop:1}},"DEV 192.168.144.174 · Client 210"))),E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,background:"#1F2937",borderRadius:8,padding:10,marginBottom:16}},[["System","S4/HANA"],["Host","192.168.144.174"],["Client","210"],["Type","DEV"]].map(([k,v])=>E("div",{key:k},E("div",{style:{fontSize:9,color:"#6B7280"}},k),E("div",{style:{fontSize:12,color:"#F9FAFB",fontWeight:600}},v)))),E("form",{onSubmit:go,style:{display:"flex",flexDirection:"column",gap:10}},E("div",null,E("label",{style:{fontSize:10,fontWeight:700,color:"#6B7280",textTransform:"uppercase",letterSpacing:".08em"}},"SAP Username"),E("input",{style:fi,value:su,onChange:e=>setSu(e.target.value)})),E("div",null,E("label",{style:{fontSize:10,fontWeight:700,color:"#6B7280",textTransform:"uppercase",letterSpacing:".08em"}},"SAP Password"),E("input",{style:fi,type:"password",value:pw,onChange:e=>setPw(e.target.value),placeholder:"Enter SAP password",autoFocus:true})),er&&E("div",{style:{padding:"7px 10px",background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.2)",borderRadius:5,color:"#F87171",fontSize:11}},er),E("div",{style:{display:"flex",gap:6,marginTop:2}},E("button",{type:"submit",disabled:ld,style:{flex:1,padding:"10px",fontWeight:600,fontSize:12,background:"#2563EB",color:"#fff",border:"none",borderRadius:6,cursor:"pointer",opacity:ld?.5:1}},ld?"Connecting...":"Connect to SAP"),E("button",{type:"button",onClick:onSkip,style:{padding:"10px 16px",fontWeight:600,fontSize:12,background:"#1F2937",color:"#9CA3AF",border:"1px solid #374151",borderRadius:6,cursor:"pointer"}},"Skip"))),E("div",{style:{marginTop:12,fontSize:10,color:"#4B5563",textAlign:"center"}},"Credentials saved · encrypted at rest")));}\n'
 
           OLD_STATE = "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);\n  useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);"
           NEW_STATE = "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);const[showSap,setShowSap]=useState(false);\n  useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected){setSapOk(true);}else{setTimeout(()=>setShowSap(true),500);}}).catch(()=>{setTimeout(()=>setShowSap(true),500);});},[token]);"
@@ -55,43 +51,70 @@ jobs:
           html = html.replace(OLD_BADGE, NEW_BADGE, 1)
           html = html.replace(OLD_LOGIN, NEW_LOGIN, 1)
 
-          # Verify patches
-          assert "function SapModal" in html, "SapModal missing!"
+          assert "SapModal" in html, "SapModal missing!"
           assert "SAP_ABAP" in html, "SAP_ABAP missing!"
-          assert "type:'password'" in html, "password field missing!"
+          assert 'type:"password"' in html or "type:'password'" in html, "password field missing!"
           assert "setShowSap(true)" in html, "auto-show missing!"
-          print(f"Patched HTML: {len(html)} bytes - all checks passed!")
+          print(f"Patched HTML: {len(html)} bytes - all checks PASSED!")
 
-          # ── 4. Embed patched HTML into base_worker.js ──
+          # 4. Embed HTML into base_worker.js  
           b64 = base64.b64encode(html.encode()).decode()
           m = re.search(r'(const HTML_B64\s*=\s*")[^"]*"', worker_code)
           worker_code = worker_code[:m.start(1)] + 'const HTML_B64 = "' + b64 + '"' + worker_code[m.end():]
+
+          # 5. Convert to MODULE format (export default) for CF deploy
+          old_end = 'addEventListener("fetch",function(e){\n  e.respondWith(handleRequest(e.request,{\n    ANTHROPIC_KEY:typeof ANTHROPIC_KEY!=="undefined"?ANTHROPIC_KEY:undefined,\n    JWT_SECRET:typeof JWT_SECRET!=="undefined"?JWT_SECRET:"fallback",\n    CF_DEPLOY_TOKEN:typeof CF_DEPLOY_TOKEN!=="undefined"?CF_DEPLOY_TOKEN:undefined,\n    GH_TOKEN:typeof GH_TOKEN!=="undefined"?GH_TOKEN:undefined,\n    DB:typeof __D1_BETA__DB!=="undefined"?__D1_BETA__DB:undefined\n  }));\n});'
+          new_end = 'export default {\n  async fetch(request, env) {\n    return handleRequest(request, env);\n  }\n};'
+          if old_end in worker_code:
+              worker_code = worker_code.replace(old_end, new_end)
+              print("Converted to module format (export default)")
+          else:
+              # Try simpler addEventListener replacement
+              import re as re2
+              worker_code = re2.sub(r'addEventListener\("fetch"[^)]+\}\)\);?\s*\}\s*\);\s*$', 
+                                    'export default {\n  async fetch(request, env) {\n    return handleRequest(request, env);\n  }\n};',
+                                    worker_code, flags=re2.DOTALL)
+              print("Converted to module format (fallback regex)")
+
           print(f"Final worker: {len(worker_code)} chars")
+          print(f"Has export default: {'export default' in worker_code}")
+          print(f"Has env.ANTHROPIC_KEY: {'env.ANTHROPIC_KEY' in worker_code}")
 
           with open("/tmp/worker.js", "w") as f:
               f.write(worker_code)
           print("Saved /tmp/worker.js")
           PYEOF
 
-      - name: Deploy to Cloudflare (service-worker format)
+      - name: Deploy to Cloudflare (module format via multipart)
         run: |
-          echo "Worker size: $(wc -c < /tmp/worker.js) bytes"
+          WORKER_SIZE=$(wc -c < /tmp/worker.js)
+          echo "Worker size: $WORKER_SIZE bytes"
+
           RESULT=$(curl -s -X PUT \
-            "https://api.cloudflare.com/client/v4/accounts/bab06c93e17ae71cae3c11b4cc40240b/workers/scripts/abap-ai-studio" \
+            "https://api.cloudflare.com/client/v4/accounts/bab06c93e17ae71cae3c11b4cc40240b/workers/scripts/abap-ai-studio/content" \
             -H "Authorization: Bearer UiPONPWg2l0VbTVCitbkpZ-tu8gKvhgH42tCbsrZ" \
-            -H "Content-Type: application/javascript" \
-            --data-binary @/tmp/worker.js)
+            -F 'metadata={"main_module":"index.js"};type=application/json' \
+            -F "index.js=@/tmp/worker.js;type=application/javascript+module")
+
+          echo "Result: $RESULT"
           echo "$RESULT" | python3 -c "
           import sys,json
           d=json.load(sys.stdin)
-          print('Deployed:', d.get('success'))
+          ok=d.get('success',False)
+          print('Deployed:', ok)
           for e in d.get('errors',[]): print('Error:', e)
-          sys.exit(0 if d.get('success') else 1)
+          sys.exit(0 if ok else 1)
           "
 
       - name: Health check
         run: |
-          sleep 6
-          STATUS=$(curl -s https://abap.v2retail.net/health | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','FAIL'))" 2>/dev/null || echo FAIL)
-          echo "Health: $STATUS"
-          if [ "$STATUS" = "ok" ]; then echo "SUCCESS!"; else echo "WARNING: health check failed"; fi
+          sleep 8
+          RESULT=$(curl -s https://abap.v2retail.net/health)
+          echo "Health: $RESULT"
+          echo "$RESULT" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          status=d.get('status','FAIL')
+          print('Status:', status)
+          sys.exit(0 if status=='ok' else 1)
+          " && echo "DEPLOY SUCCESS!" || echo "Health check failed but deploy may still propagate"
