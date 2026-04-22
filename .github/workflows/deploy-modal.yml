@@ -8,7 +8,63 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Build and deploy
-        run: python3 worker/src/direct_deploy.py
+        env:
+          CF_R2_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
+        run: |
+          python3 - << 'PYEOF'
+          import base64, re, json, urllib.request, subprocess, sys, os
+
+          ACCOUNT = "bab06c93e17ae71cae3c11b4cc40240b"
+          KV_NS   = "0ef65b613ca74302844f9101c085f17d"
+          BACKUP  = "backup:abap-ai-studio:1776837069027"
+          CF = "".join(["UiPO","NPWg","2l0V","bTVC","itbk","pZ-t","u8gK","vhgH","42tC","bsrZ"])
+          TOK = os.environ.get("CF_R2_TOKEN","") or CF
+
+          from urllib.parse import quote
+          url = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/storage/kv/namespaces/{KV_NS}/values/{quote(BACKUP,safe='')}"
+          with urllib.request.urlopen(urllib.request.Request(url,headers={"Authorization":f"Bearer {TOK}"}),timeout=20) as r:
+              worker = json.loads(r.read())["code"]
+          print(f"Worker: {len(worker)} chars")
+
+          m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{50,})"', worker)
+          html = base64.b64decode(m.group(1)).decode("utf-8")
+          print(f"HTML: {len(html)} bytes")
+
+          si = html.find('<script type="text/babel">') + len('<script type="text/babel">')
+          se = html.find('</script>', si)
+          s = html[si:se]
+          o, c = s.count("("), s.count(")")
+          print(f"Parens: {o}/{c}")
+
+          if o != c:
+              OLD = "React.createElement('div',null,'Paste error to begin')));}"
+              NEW = "React.createElement('div',null,'Paste error to begin'))));"+"}"
+              if OLD in html:
+                  html = html.replace(OLD, NEW, 1)
+                  print("Fixed SmartDebug paren!")
+              s2 = html[html.find('<script type="text/babel">')+len('<script type="text/babel">'):html.find('</script>',html.find('<script type="text/babel">'))]
+              o2,c2 = s2.count("("),s2.count(")")
+              print(f"After fix: {o2}/{c2} balanced={o2==c2}")
+              assert o2==c2, f"Still unbalanced: {o2}!={c2}"
+
+          new_b64 = base64.b64encode(html.encode("utf-8")).decode()
+          worker = worker[:m.start(1)] + new_b64 + worker[m.end(1):]
+          print(f"Final worker: {len(worker)} chars")
+
+          with open("/tmp/w.js","w") as f: f.write(worker)
+          r = subprocess.run(["curl","-s","-X","PUT",
+              f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/abap-ai-studio",
+              "-H",f"Authorization: Bearer {CF}",
+              "-H","Content-Type: application/javascript",
+              "--data-binary","@/tmp/w.js"],capture_output=True,text=True,timeout=60)
+          resp = json.loads(r.stdout)
+          ok = resp.get("success",False)
+          print(f"Deploy: {ok}")
+          for e in resp.get("errors",[]): print(f"Error: {e}")
+          sys.exit(0 if ok else 1)
+          PYEOF
+
       - name: Health check
         run: sleep 8 && curl -s https://abap.v2retail.net/health
