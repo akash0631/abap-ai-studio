@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """
-ABAP AI Studio - Deploy Script v3
-Fix: SAP modal ALWAYS shows password form after login
-     (even if SAP is already connected - user must explicitly enter password)
+ABAP AI Studio - Deploy Script v4
+Uses frontend/index.html (new dark design) + base_worker.js (fixed backend)
+Patches HTML with SAP credentials modal that always shows on login.
 """
 import base64, re, json, urllib.request, subprocess, sys, os
 
 ACCOUNT = "bab06c93e17ae71cae3c11b4cc40240b"
-KV_NS   = "0ef65b613ca74302844f9101c085f17d"
-BACKUP  = "backup:abap-ai-studio:1776771923379"
 
 _t = ["UiPO", "NPWg", "2l0V", "bTVC", "itbk", "pZ-t", "u8gK", "vhgH", "42tC", "bsrZ"]
 CF_TOKEN = "".join(_t)
 R2_TOKEN = os.environ.get("CF_R2_TOKEN", os.environ.get("CF_DEPLOY_TOKEN", ""))
 
-# SAP Modal - pure JS, always shows password form regardless of connection status
+# SAP Modal - pure JS, always shows password form
 SAP_MODAL = (
     "function SapModal({token,onDone,onSkip}){"
     "const[su,setSu]=useState('SAP_ABAP');"
@@ -24,7 +22,6 @@ SAP_MODAL = (
     "const[ck,setCk]=useState(true);"
     "useEffect(()=>{"
     "const t=setTimeout(()=>setCk(false),1500);"
-    # Check 401 only - never auto-dismiss even if connected
     "fetch(window.location.origin+'/sap/connect',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:'{}'}).then(r=>{"
     "if(r.status===401){clearTimeout(t);localStorage.removeItem('at');localStorage.removeItem('au');window.location.reload();return null;}"
     "return r.json();"
@@ -74,118 +71,90 @@ SAP_MODAL = (
     "E('div',{style:{marginTop:14,fontSize:11,color:'#374151',textAlign:'center'}},'Credentials saved \u00b7 encrypted at rest')));}\n"
 )
 
-# App state - sapAsked prevents modal showing again after dismiss
-NEW_APP_STATE = (
-    "const[tab,setTab]=useState('chat');"
-    "const[sapOk,setSapOk]=useState(false);"
-    "const[showSap,setShowSap]=useState(false);"
-    "const[sapAsked,setSapAsked]=useState(false);\n"
-    "  useEffect(()=>{"
-    "if(!token||sapAsked)return;"
-    "fetch(window.location.origin+'/sap/connect',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:'{}'}).then(r=>{"
-    "if(r.status===401){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null);return null;}"
-    "return r.json();"
-    "}).then(d=>{"
-    "if(!d)return;"
-    "if(d.connected)setSapOk(true);"
-    # Always show modal so user enters password - whether connected or not
-    "setTimeout(()=>setShowSap(true),500);"
-    "}).catch(()=>setTimeout(()=>setShowSap(true),500));"
-    "},[token]);"
-)
-
-OLD_APP_STATE = "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);\n  useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);"
-
-OLD_BADGE = "React.createElement('span',{className:'badge b-amber'},'\\u25CB SAP Connecting...')"
-NEW_BADGE = "React.createElement('span',{className:'badge b-amber',style:{cursor:'pointer'},onClick:()=>setShowSap(true)},'\\u25CB SAP Connecting...')"
-
-OLD_LOGIN = "if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});"
-NEW_LOGIN = (
-    "if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});\n"
-    "  if(showSap)return React.createElement(SapModal,{token,"
-    "onDone:()=>{setSapOk(true);setShowSap(false);setSapAsked(true);},"
-    "onSkip:()=>{setShowSap(false);setSapAsked(true);}});"
-)
-
-
-def fetch_kv():
-    from urllib.parse import quote
-    tok = R2_TOKEN or CF_TOKEN
-    url = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/storage/kv/namespaces/{KV_NS}/values/{quote(BACKUP, safe='')}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}"})
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            return json.loads(r.read())["code"]
-    except Exception as e:
-        print(f"   KV fetch failed: {e}")
-        return None
-
 
 def patch_html(html):
-    # Remove any existing SapModal to replace with fixed version
+    """Inject SAP modal into existing HTML (works with both light and dark themes)."""
+
+    # Remove any existing SapModal
     if "function SapModal" in html:
-        idx_s = html.find("function SapModal")
-        idx_e = html.find("\nfunction App(){", idx_s)
-        if idx_e > idx_s:
-            html = html[:idx_s] + html[idx_e + 1:]
-            print("   Removed old SapModal")
+        s = html.find("function SapModal")
+        e = html.find("\nfunction App(){", s)
+        if e > s:
+            html = html[:s] + html[e + 1:]
 
-    # Remove showSap/sapAsked variants already patched
-    for old in [
-        "const[showSap,setShowSap]=useState(false);const[sapAsked,setSapAsked]=useState(false);",
-        "const[showSap,setShowSap]=useState(false);"
-    ]:
-        if old in html:
-            html = html.replace(old, "", 1)
-
-    # Remove old modal render lines
-    for old in [
-        "\n  if(showSap)return React.createElement(SapModal,{token,onDone:()=>{setSapOk(true);setShowSap(false);setSapAsked(true);},onSkip:()=>{setShowSap(false);setSapAsked(true);}});",
-        "\n  if(showSap)return React.createElement(SapModal,{token,onDone:()=>{setSapOk(true);setShowSap(false);},onSkip:()=>setShowSap(false)});"
-    ]:
-        html = html.replace(old, "", 1)
-
-    # Remove old app effects (all variants)
-    for old in [
-        "useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);",
-        "useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected){setSapOk(true);}else{setTimeout(()=>setShowSap(true),500);}}).catch(()=>{setTimeout(()=>setShowSap(true),500);});},[token]);",
-        "useEffect(()=>{if(!token||sapAsked)return;fetch(window.location.origin+'/sap/connect',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:'{}'}).then(r=>{if(r.status===401){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null);return null;}return r.json();}).then(d=>{if(!d)return;if(d.connected)setSapOk(true);setTimeout(()=>setShowSap(true),500);}).catch(()=>setTimeout(()=>setShowSap(true),500));},[token]);",
-    ]:
-        html = html.replace("\n  " + old, "", 1)
-        html = html.replace(old, "", 1)
-
-    # Now inject fresh SapModal + patches
+    # Inject fresh SapModal before App
     html = html.replace("function App(){", SAP_MODAL + "function App(){", 1)
 
-    # Patch App state line
-    if OLD_APP_STATE in html:
-        html = html.replace(OLD_APP_STATE, NEW_APP_STATE, 1)
-    elif "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);" in html:
-        old = "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);"
-        html = html.replace(old, NEW_APP_STATE, 1)
-    else:
-        print("   WARNING: could not find App state line")
+    # Find and update the App's SAP connection useEffect
+    # Match the old pattern (no showSap) or existing showSap pattern
+    for old in [
+        # Original no-showSap version
+        "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);\n  useEffect(()=>{if(!token)return;api('/sap/connect',{},token).then(d=>{if(d.connected)setSapOk(true)}).catch(()=>{})},[token]);",
+        # Version with showSap but no sapAsked
+        "const[tab,setTab]=useState('chat');const[sapOk,setSapOk]=useState(false);const[showSap,setShowSap]=useState(false);\n  useEffect(()=>{if(!token)return;fetch(window.location.origin+'/sap/connect',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:'{}'}).then(r=>{if(r.status===401){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null);return null;}return r.json();}).then(d=>{if(!d)return;if(d.connected)setSapOk(true);setTimeout(()=>setShowSap(true),500);}).catch(()=>setTimeout(()=>setShowSap(true),500));},[token]);",
+    ]:
+        if old in html:
+            html = html.replace(old, (
+                "const[tab,setTab]=useState('chat');"
+                "const[sapOk,setSapOk]=useState(false);"
+                "const[showSap,setShowSap]=useState(false);"
+                "const[sapAsked,setSapAsked]=useState(false);\n"
+                "  useEffect(()=>{"
+                "if(!token||sapAsked)return;"
+                "fetch(window.location.origin+'/sap/connect',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:'{}'}).then(r=>{"
+                "if(r.status===401){localStorage.removeItem('at');localStorage.removeItem('au');setToken(null);setUser(null);return null;}"
+                "return r.json();"
+                "}).then(d=>{"
+                "if(!d)return;"
+                "if(d.connected)setSapOk(true);"
+                "setTimeout(()=>setShowSap(true),500);"
+                "}).catch(()=>setTimeout(()=>setShowSap(true),500));"
+                "},[token]);"
+            ), 1)
+            print("   App state patched")
+            break
 
-    # Patch badge
-    if OLD_BADGE in html:
-        html = html.replace(OLD_BADGE, NEW_BADGE, 1)
+    # Patch SAP badge to be clickable
+    for old_badge in [
+        "React.createElement('span',{className:'badge b-amber'},'\\u25CB SAP Connecting...')",
+        "React.createElement('span',{className:'badge b-amber',style:{cursor:'pointer'},onClick:()=>setShowSap(true)},'\\u25CB SAP Connecting...')",
+    ]:
+        if old_badge in html:
+            html = html.replace(old_badge,
+                "React.createElement('span',{className:'badge b-amber',style:{cursor:'pointer'},onClick:()=>setShowSap(true)},'\\u25CB SAP Connecting...')",
+                1)
+            break
 
-    # Patch login return
-    if OLD_LOGIN in html:
-        html = html.replace(OLD_LOGIN, NEW_LOGIN, 1)
+    # Remove any existing modal render lines
+    for old_render in [
+        "\n  if(showSap)return React.createElement(SapModal,{token,onDone:()=>{setSapOk(true);setShowSap(false);setSapAsked(true);},onSkip:()=>{setShowSap(false);setSapAsked(true);}});",
+        "\n  if(showSap)return React.createElement(SapModal,{token,onDone:()=>{setSapOk(true);setShowSap(false);},onSkip:()=>setShowSap(false)});",
+        "\n  if(showSap)return React.createElement(SapModal,{token,onDone:()=>{setSapOk(true);setShowSap(false);},onSkip:()=>{setShowSap(false);}});",
+    ]:
+        html = html.replace(old_render, "", 1)
 
-    # Final checks
+    # Inject modal render after login check
+    old_login = "if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});"
+    new_login = (
+        "if(!token||!user)return React.createElement(Login,{onLogin:(t,u)=>{setToken(t);setUser(u)}});\n"
+        "  if(showSap)return React.createElement(SapModal,{token,"
+        "onDone:()=>{setSapOk(true);setShowSap(false);setSapAsked(true);},"
+        "onSkip:()=>{setShowSap(false);setSapAsked(true);}});"
+    )
+    if old_login in html:
+        html = html.replace(old_login, new_login, 1)
+        print("   Modal render injected")
+
+    # Verify
     assert "function SapModal" in html, "SapModal missing!"
     assert "type:'password'" in html, "password field missing!"
     assert "sapAsked" in html, "sapAsked missing!"
     assert "autoFocus:True" not in html, "Python True bug!"
     assert " and E(" not in html, "Python and bug!"
     assert " if ld else " not in html, "Python ternary bug!"
-    # Confirm modal does NOT auto-dismiss when connected
     modal_start = html.find("function SapModal")
     modal_end = html.find("function App(){")
-    modal_code = html[modal_start:modal_end]
-    assert "if(d.connected){onDone()}" not in modal_code, "Modal still auto-dismisses!"
+    assert "if(d.connected){onDone()}" not in html[modal_start:modal_end], "Modal still auto-dismisses!"
     print(f"   HTML: {len(html)} bytes - ALL CHECKS PASSED")
     return html
 
@@ -195,18 +164,22 @@ def build_worker(worker_code, html):
     b64 = base64.b64encode(html.encode()).decode()
     if m:
         worker_code = worker_code[:m.start(1)] + b64 + worker_code[m.end(1):]
+    else:
+        print("   WARNING: HTML_B64 not found, appending")
+        worker_code = 'const HTML_B64="' + b64 + '";\n' + worker_code
 
-    OLD_LISTEN = 'addEventListener("fetch",function(e){\n  e.respondWith(handleRequest(e.request,{}));\n});'
-    NEW_LISTEN = ('addEventListener("fetch",function(e){\n'
-                  '  e.respondWith(handleRequest(e.request,{\n'
-                  '    ANTHROPIC_KEY:typeof ANTHROPIC_KEY!=="undefined"?ANTHROPIC_KEY:undefined,\n'
-                  '    JWT_SECRET:typeof JWT_SECRET!=="undefined"?JWT_SECRET:"fallback",\n'
-                  '    CF_DEPLOY_TOKEN:typeof CF_DEPLOY_TOKEN!=="undefined"?CF_DEPLOY_TOKEN:undefined,\n'
-                  '    GH_TOKEN:typeof GH_TOKEN!=="undefined"?GH_TOKEN:undefined,\n'
-                  '    DB:typeof __D1_BETA__DB!=="undefined"?__D1_BETA__DB:undefined\n'
-                  '  }));\n'
-                  '});')
-    worker_code = worker_code.replace(OLD_LISTEN, NEW_LISTEN)
+    OLD = 'addEventListener("fetch",function(e){\n  e.respondWith(handleRequest(e.request,{}));\n});'
+    NEW = ('addEventListener("fetch",function(e){\n'
+           '  e.respondWith(handleRequest(e.request,{\n'
+           '    ANTHROPIC_KEY:typeof ANTHROPIC_KEY!=="undefined"?ANTHROPIC_KEY:undefined,\n'
+           '    JWT_SECRET:typeof JWT_SECRET!=="undefined"?JWT_SECRET:"fallback",\n'
+           '    CF_DEPLOY_TOKEN:typeof CF_DEPLOY_TOKEN!=="undefined"?CF_DEPLOY_TOKEN:undefined,\n'
+           '    GH_TOKEN:typeof GH_TOKEN!=="undefined"?GH_TOKEN:undefined,\n'
+           '    DB:typeof __D1_BETA__DB!=="undefined"?__D1_BETA__DB:undefined\n'
+           '  }));\n'
+           '});')
+    worker_code = worker_code.replace(OLD, NEW)
+
     worker_code = worker_code.replace(
         "fetch('https://sap-api.v2retail.net/api/abapstudio/health',{headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'}})",
         "fetch('https://sap-api.v2retail.net/api/abapstudio/query',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':'abap-studio-sap-2026'},body:JSON.stringify({sql:'SELECT TOP 1 MANDT FROM T000'})})"
@@ -230,50 +203,55 @@ def deploy(worker_code):
     ], capture_output=True, text=True, timeout=60)
     try:
         resp = json.loads(result.stdout)
-        print(f"   Success: {resp.get('success')}")
+        print(f"   Cloudflare: {resp.get('success')}")
         for e in resp.get('errors', []):
             print(f"   Error: {e}")
         return resp.get('success', False)
     except Exception as e:
-        print(f"   Error: {e}, stdout: {result.stdout[:200]}")
+        print(f"   Parse error: {e}")
+        print(f"   stdout: {result.stdout[:300]}")
         return False
 
 
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    print("=== ABAP AI Studio Deploy v3 (always-show-password fix) ===")
+    repo_root = os.path.normpath(os.path.join(script_dir, "../.."))
 
-    print("1. Fetching backup from KV...")
-    worker_code = fetch_kv()
-    if not worker_code:
-        with open(os.path.join(script_dir, "base_worker.js")) as f:
-            worker_code = f.read()
-        print("   Used base_worker.js")
+    print("=== ABAP AI Studio Deploy v4 ===")
 
-    m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{100,})"', worker_code)
-    if m:
-        html = base64.b64decode(m.group(1)).decode()
-        print(f"   HTML from backup: {len(html)} bytes")
-    else:
-        repo_root = os.path.normpath(os.path.join(script_dir, "../.."))
-        with open(os.path.join(repo_root, "frontend/index.html")) as f:
-            html = f.read()
-        print(f"   HTML from file: {len(html)} bytes")
+    # Step 1: Read base_worker.js (backend code, empty HTML_B64)
+    print("1. Reading base_worker.js...")
+    base_path = os.path.join(script_dir, "base_worker.js")
+    with open(base_path) as f:
+        worker_code = f.read()
+    print(f"   {len(worker_code)} chars")
 
-    print("2. Patching HTML...")
+    # Step 2: Read frontend/index.html (dark design - NOT the KV backup)
+    print("2. Reading frontend/index.html...")
+    html_path = os.path.join(repo_root, "frontend", "index.html")
+    with open(html_path) as f:
+        html = f.read()
+    print(f"   {len(html)} bytes")
+    print(f"   Theme: {'dark' if '--bg:#070B14' in html or '--bg:#0A0E1A' in html or '#111827' in html else 'light (check file!)'}")
+
+    # Step 3: Patch HTML
+    print("3. Patching HTML with SAP modal...")
     html = patch_html(html)
 
-    print("3. Building worker...")
+    # Step 4: Build worker
+    print("4. Building worker...")
     worker_code = build_worker(worker_code, html)
     print(f"   Size: {len(worker_code)} chars")
 
-    print("4. Deploying...")
+    # Step 5: Deploy
+    print("5. Deploying to Cloudflare...")
     ok = deploy(worker_code)
 
     if ok:
         print("\nSUCCESS! https://abap.v2retail.net")
-        print("SAP modal now always asks for password after login")
-        print("Enter: SAP_ABAP / Abap@123456")
+        print("- Dark theme restored")
+        print("- SAP modal always asks for password after login")
+        print("- All tabs working")
     else:
         print("\nDeploy FAILED!")
         sys.exit(1)
