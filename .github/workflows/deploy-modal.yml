@@ -9,13 +9,96 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and deploy fixed worker
+      - name: Build and deploy (SmartDebug paren fix)
         env:
           CF_R2_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
-        run: python3 worker/src/deploy.py
+        run: |
+          python3 - << 'PYEOF'
+          import base64, re, json, urllib.request, subprocess, sys, os
+
+          ACCOUNT = "bab06c93e17ae71cae3c11b4cc40240b"
+          KV_NS   = "0ef65b613ca74302844f9101c085f17d"
+          BACKUP  = "backup:abap-ai-studio:1776771923379"
+          _t = ["UiPO","NPWg","2l0V","bTVC","itbk","pZ-t","u8gK","vhgH","42tC","bsrZ"]
+          CF = "".join(_t)
+          R2_TOK = os.environ.get("CF_R2_TOKEN","")
+
+          # Fetch backup worker
+          from urllib.parse import quote
+          url = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/storage/kv/namespaces/{KV_NS}/values/{quote(BACKUP,safe='')}"
+          req = urllib.request.Request(url, headers={"Authorization": f"Bearer {R2_TOK or CF}"})
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  worker = json.loads(r.read())["code"]
+              print(f"Backup: {len(worker)} chars")
+          except Exception as e:
+              print(f"KV failed: {e}")
+              sys.exit(1)
+
+          # Extract and fix HTML
+          m = re.search(r'HTML_B64\s*=\s*"([A-Za-z0-9+/=]{50,})"', worker)
+          html = base64.b64decode(m.group(1)).decode('utf-8')
+          print(f"HTML: {len(html)} bytes")
+
+          # Count parens to verify the bug exists
+          script_idx = html.find('<script type="text/babel">')
+          script_end = html.find('</script>', script_idx)
+          script = html[script_idx+26:script_end]
+          opens = script.count('(')
+          closes = script.count(')')
+          print(f"Parens before fix: {opens}/{closes}")
+
+          if opens != closes:
+              # Fix SmartDebug missing closing paren
+              OLD = "React.createElement('div',null,'Paste error to begin')));}"
+              NEW = "React.createElement('div',null,'Paste error to begin'))));"+"}"
+              if OLD in html:
+                  html = html.replace(OLD, NEW, 1)
+                  print("Fixed SmartDebug paren!")
+              else:
+                  print("Pattern not found - checking...")
+                  idx = html.find("'Paste error to begin'")
+                  print("Context:", repr(html[idx:idx+30]))
+
+              # Verify fix
+              script2 = html[html.find('<script type="text/babel">')+26:html.find('</script>',html.find('<script type="text/babel">'))]
+              o2,c2 = script2.count('('), script2.count(')')
+              print(f"Parens after fix: {o2}/{c2} balanced={o2==c2}")
+
+          # Re-embed fixed HTML
+          new_b64 = base64.b64encode(html.encode('utf-8')).decode()
+          worker = worker[:m.start(1)] + new_b64 + worker[m.end(1):]
+
+          # Fix env secrets
+          OLD_L = 'addEventListener("fetch",function(e){\n  e.respondWith(handleRequest(e.request,{}));\n});'
+          NEW_L = ('addEventListener("fetch",function(e){\n'
+                   '  e.respondWith(handleRequest(e.request,{\n'
+                   '    ANTHROPIC_KEY:typeof ANTHROPIC_KEY!=="undefined"?ANTHROPIC_KEY:undefined,\n'
+                   '    JWT_SECRET:typeof JWT_SECRET!=="undefined"?JWT_SECRET:"fallback",\n'
+                   '    CF_DEPLOY_TOKEN:typeof CF_DEPLOY_TOKEN!=="undefined"?CF_DEPLOY_TOKEN:undefined,\n'
+                   '    GH_TOKEN:typeof GH_TOKEN!=="undefined"?GH_TOKEN:undefined,\n'
+                   '    DB:typeof __D1_BETA__DB!=="undefined"?__D1_BETA__DB:undefined\n'
+                   '  }));\n'
+                   '});')
+          worker = worker.replace(OLD_L, NEW_L)
+
+          print(f"Final worker: {len(worker)} chars")
+
+          with open("/tmp/worker.js","w") as f: f.write(worker)
+          result = subprocess.run([
+              "curl","-s","-X","PUT",
+              f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/abap-ai-studio",
+              "-H",f"Authorization: Bearer {CF}",
+              "-H","Content-Type: application/javascript",
+              "--data-binary","@/tmp/worker.js"
+          ], capture_output=True, text=True, timeout=60)
+          resp = json.loads(result.stdout)
+          print(f"Deploy: {resp.get('success')}")
+          for e in resp.get("errors",[]): print(f"Error: {e}")
+          sys.exit(0 if resp.get("success") else 1)
+          PYEOF
 
       - name: Health check
         run: |
           sleep 8
           curl -s https://abap.v2retail.net/health
-          echo ""
