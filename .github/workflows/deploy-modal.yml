@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy
+      - name: Build and deploy
         run: python3 worker/src/direct_deploy.py
       - name: Health check
         run: sleep 8 && curl -s https://abap.v2retail.net/health
