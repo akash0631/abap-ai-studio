@@ -1,0 +1,25 @@
+name: Fix TADIR Author
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run patch script
+        run: python3 .github/scripts/fix-tadir-author.py 2>&1 | tee /tmp/run.log
+      - name: Commit log to repo
+        if: always()
+        run: |
+          mkdir -p .deploy-logs
+          cp /tmp/run.log .deploy-logs/fix-tadir-author.log || echo "no log file" > .deploy-logs/fix-tadir-author.log
+          git config user.name "deploy-bot"
+          git config user.email "deploy-bot@v2retail.net"
+          git add .deploy-logs/fix-tadir-author.log
+          git commit -m "deploy log: fix-tadir-author" || echo "nothing to commit"
+          git push origin main || echo "push failed"
