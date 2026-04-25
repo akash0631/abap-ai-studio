@@ -3,13 +3,18 @@ name: Deploy Push-to-SAP Tab
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Patch live worker to add Push-to-SAP tab
+        id: patch
         run: |
-          python3 << 'PYEOF'
+          python3 << 'PYEOF' 2>&1 | tee /tmp/run.log || true
           import re, base64, urllib.request, urllib.error, sys, traceback
 
           ACCOUNT = "bab06c93e17ae71cae3c11b4cc40240b"
@@ -28,154 +33,168 @@ jobs:
               except urllib.error.HTTPError as e:
                   body = e.read().decode("utf-8", errors="replace")
                   print(f"HTTP {e.code} from {method} {url}")
-                  print("Response body:", body[:1000])
+                  print("Response body:", body[:1500])
                   raise
 
-          # ---- Step 1: Read live worker ----
-          print("Step 1: Reading live worker...")
           try:
+              print("Step 1: Reading live worker...")
               status, raw = fetch(API)
+              worker = raw.decode("utf-8")
+              print(f"  Live worker: {len(worker):,} chars (HTTP {status})")
+
+              m = re.search(r'const HTML_B64 = "([^"]+)";', worker)
+              if not m:
+                  print("ERROR: HTML_B64 constant not found"); sys.exit(2)
+              old_b64 = m.group(1)
+              html = base64.b64decode(old_b64).decode("utf-8")
+              print(f"Step 2: Decoded HTML: {len(html):,} chars, {html.count(chr(10)):,} lines")
+
+              if "function PushToSap(" in html:
+                  print("PushToSap already present - nothing to do.")
+                  sys.exit(0)
+
+              PUSH_COMPONENT = r'''function PushToSap({token}){
+                const[prog,setProg]=useState('');
+                const[src,setSrc]=useState('');
+                const[title,setTitle]=useState('Pushed from Claude AI');
+                const[transport,setTransport]=useState('');
+                const[confirm,setConfirm]=useState(false);
+                const[loading,setLoading]=useState(false);
+                const[testing,setTesting]=useState(false);
+                const[loadingSrc,setLoadingSrc]=useState(false);
+                const[result,setResult]=useState(null);
+                const[testResult,setTestResult]=useState(null);
+                async function loadExisting(){
+                  if(!prog.trim())return;
+                  setLoadingSrc(true);setResult(null);setTestResult(null);
+                  try{
+                    const d=await api('/sap/smart-source',{name:prog.trim()},token);
+                    if(d.error){setResult({ok:false,msg:d.error});setLoadingSrc(false);return;}
+                    setSrc(d.source||'');
+                    setResult({ok:true,msg:'Loaded '+(d.detected==='function_module'?'FM':'Program')+' '+d.name+' ('+(d.lines||0)+' lines) ready to edit'});
+                  }catch(x){setResult({ok:false,msg:x.message});}
+                  setLoadingSrc(false);
+                }
+                async function push(){
+                  if(!prog.trim()||!src.trim()||!confirm)return;
+                  setLoading(true);setResult(null);setTestResult(null);
+                  try{
+                    const d=await api('/pipeline/deploy',{program:prog.trim().toUpperCase(),source:src,title:title||'Pushed from Claude AI',transport:transport.trim()},token);
+                    const ok=d.success!==false&&!d.error&&!d.ERROR;
+                    setResult({ok,raw:d,msg:ok?('Deployed '+prog.trim().toUpperCase()+' to SAP DEV'):(d.error||d.message||d.ERROR||'Deploy failed')});
+                  }catch(x){setResult({ok:false,msg:x.message});}
+                  setLoading(false);
+                }
+                async function runTest(){
+                  if(!prog.trim())return;
+                  setTesting(true);setTestResult(null);
+                  try{
+                    const d=await api('/pipeline/test',{program:prog.trim().toUpperCase()},token);
+                    const ok=d.success!==false&&!d.error&&!d.syntax_error&&!d.ERROR;
+                    setTestResult({ok,raw:d,msg:ok?'Syntax OK':(d.syntax_error||d.error||d.ERROR||'Syntax check failed')});
+                  }catch(x){setTestResult({ok:false,msg:x.message});}
+                  setTesting(false);
+                }
+                const okBadge={background:'var(--gbg)',color:'var(--green)',border:'1px solid rgba(15,186,129,.3)'};
+                const errBadge={background:'var(--rbg)',color:'var(--red)',border:'1px solid rgba(240,82,82,.3)'};
+                return React.createElement('div',{className:'panel'},
+                  React.createElement('div',{className:'ph'},
+                    React.createElement('div',{className:'pt'},'\u2B06 Push to SAP'),
+                    React.createElement('div',{className:'ps'},'Deploy ABAP code to SAP DEV (192.168.144.174 \u00B7 Client 210). A backup of the existing object is saved automatically before write.')
+                  ),
+                  React.createElement('div',{className:'toolbar'},
+                    React.createElement('input',{value:prog,onChange:e=>setProg(e.target.value),placeholder:'FM or Program name (e.g. ZV2_GR_POST)',style:{flex:1,fontFamily:'var(--mono)',fontWeight:600},onKeyDown:e=>e.key==='Enter'&&loadExisting()}),
+                    React.createElement('button',{className:'bs',onClick:loadExisting,disabled:loadingSrc||!prog.trim()},loadingSrc?'Loading...':'Load Existing')
+                  ),
+                  React.createElement('div',{className:'toolbar'},
+                    React.createElement('input',{value:title,onChange:e=>setTitle(e.target.value),placeholder:'Description / Short text',style:{flex:2}}),
+                    React.createElement('input',{value:transport,onChange:e=>setTransport(e.target.value),placeholder:'Transport (optional, e.g. S4DK900123)',style:{flex:1,fontFamily:'var(--mono)'}})
+                  ),
+                  React.createElement('textarea',{value:src,onChange:e=>setSrc(e.target.value),placeholder:'Paste ABAP source here, or click Load Existing to edit current code...',style:{flex:1,minHeight:200,fontFamily:'var(--mono)',fontSize:12,resize:'none',background:'#040810',color:'#9BADC8',border:'1px solid var(--border)',borderRadius:'var(--r)',padding:12,marginBottom:10}}),
+                  React.createElement('div',{style:{display:'flex',gap:10,alignItems:'center',marginBottom:10,flexWrap:'wrap',flexShrink:0}},
+                    React.createElement('label',{style:{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--fg2)',cursor:'pointer'}},
+                      React.createElement('input',{type:'checkbox',checked:confirm,onChange:e=>setConfirm(e.target.checked),style:{width:14,height:14,padding:0,margin:0}}),
+                      'I confirm this writes to SAP DEV (S4D)'
+                    ),
+                    React.createElement('button',{className:'bp',onClick:push,disabled:loading||!confirm||!prog.trim()||!src.trim(),style:{background:confirm?'var(--amber)':'var(--bg4)',color:confirm?'#000':'var(--fg4)'}},loading?'Pushing...':'\u2B06 Push to SAP'),
+                    result&&result.ok&&React.createElement('button',{className:'bs',onClick:runTest,disabled:testing},testing?'Testing...':'Run Syntax Test'),
+                    result&&React.createElement('span',{className:'badge',style:result.ok?okBadge:errBadge},(result.ok?'\u2713 ':'\u2717 ')+result.msg),
+                    testResult&&React.createElement('span',{className:'badge',style:testResult.ok?okBadge:errBadge},(testResult.ok?'\u2713 ':'\u2717 ')+testResult.msg)
+                  ),
+                  result&&result.raw&&React.createElement('div',{style:{maxHeight:140,overflow:'auto',background:'#040810',border:'1px solid var(--border)',borderRadius:'var(--r)',padding:10,fontFamily:'var(--mono)',fontSize:11,color:'var(--fg3)',flexShrink:0}},
+                    React.createElement('div',{style:{color:'var(--fg4)',marginBottom:4,fontSize:10,textTransform:'uppercase',letterSpacing:'.06em'}},'Deploy response'),
+                    React.createElement('pre',{style:{margin:0,whiteSpace:'pre-wrap'}},JSON.stringify(result.raw,null,2))
+                  ),
+                  testResult&&testResult.raw&&React.createElement('div',{style:{maxHeight:140,overflow:'auto',background:'#040810',border:'1px solid var(--border)',borderRadius:'var(--r)',padding:10,fontFamily:'var(--mono)',fontSize:11,color:'var(--fg3)',marginTop:8,flexShrink:0}},
+                    React.createElement('div',{style:{color:'var(--fg4)',marginBottom:4,fontSize:10,textTransform:'uppercase',letterSpacing:'.06em'}},'Test response'),
+                    React.createElement('pre',{style:{margin:0,whiteSpace:'pre-wrap'}},JSON.stringify(testResult.raw,null,2))
+                  )
+                );
+              }
+              '''
+
+              marker_app = "\nfunction App(){"
+              if html.count(marker_app) != 1:
+                  print(f"ERROR: marker_app count = {html.count(marker_app)}"); sys.exit(3)
+              html = html.replace(marker_app, "\n" + PUSH_COMPONENT + marker_app, 1)
+
+              old_tab = "    {id:'source',icon:'\U0001F4DD',label:'Source Viewer',sec:'sap'},"
+              if html.count(old_tab) != 1:
+                  print(f"ERROR: source-tab anchor count = {html.count(old_tab)}"); sys.exit(4)
+              new_tab = "    {id:'push',icon:'\u2B06',label:'Push to SAP',sec:'sap'},\n" + old_tab
+              html = html.replace(old_tab, new_tab, 1)
+
+              old_panels = "const panels={chat:React.createElement(Chat,{token}),"
+              if html.count(old_panels) != 1:
+                  print(f"ERROR: panels anchor count = {html.count(old_panels)}"); sys.exit(5)
+              new_panels = "const panels={push:React.createElement(PushToSap,{token}),chat:React.createElement(Chat,{token}),"
+              html = html.replace(old_panels, new_panels, 1)
+
+              print(f"Step 5: Patched HTML: {len(html):,} chars")
+
+              new_b64 = base64.b64encode(html.encode("utf-8")).decode("ascii")
+              worker_new = worker.replace('const HTML_B64 = "' + old_b64 + '";',
+                                          'const HTML_B64 = "' + new_b64 + '";', 1)
+              if worker_new == worker:
+                  print("ERROR: HTML_B64 not replaced"); sys.exit(6)
+              print(f"Step 6: New worker: {len(worker_new):,} chars (was {len(worker):,})")
+
+              with open("/tmp/fixed.js", "w") as f:
+                  f.write(worker_new)
+
+              print("Step 7: Uploading via curl...")
+              import subprocess
+              cp = subprocess.run([
+                  "curl","-s","-w","\nHTTP_CODE:%{http_code}\n","-X","PUT",
+                  API,
+                  "-H", f"Authorization: Bearer {CF}",
+                  "-H", "Content-Type: application/javascript",
+                  "--data-binary", "@/tmp/fixed.js",
+              ], capture_output=True, text=True, timeout=120)
+              print("  curl stdout:", cp.stdout[:1500])
+              print("  curl stderr:", cp.stderr[:500])
+              if "HTTP_CODE:200" in cp.stdout or '"success":true' in cp.stdout:
+                  print("SUCCESS")
+              else:
+                  print("UPLOAD FAILED"); sys.exit(7)
+          except SystemExit:
+              raise
           except Exception as e:
-              print("FATAL: failed to read live worker:", repr(e)); sys.exit(1)
-          worker = raw.decode("utf-8")
-          print(f"  Live worker: {len(worker):,} chars (HTTP {status})")
-
-          # ---- Step 2: Locate and decode HTML_B64 ----
-          m = re.search(r'const HTML_B64 = "([^"]+)";', worker)
-          if not m:
-              print("ERROR: HTML_B64 constant not found"); sys.exit(1)
-          old_b64 = m.group(1)
-          html = base64.b64decode(old_b64).decode("utf-8")
-          print(f"Step 2: Decoded HTML: {len(html):,} chars, {html.count(chr(10)):,} lines")
-
-          # ---- Step 3: Idempotency guard ----
-          if "function PushToSap(" in html:
-              print("PushToSap already present - nothing to do.")
-              sys.exit(0)
-
-          # ---- Step 4: Build the new React component ----
-          PUSH_COMPONENT = r'''function PushToSap({token}){
-            const[prog,setProg]=useState('');
-            const[src,setSrc]=useState('');
-            const[title,setTitle]=useState('Pushed from Claude AI');
-            const[transport,setTransport]=useState('');
-            const[confirm,setConfirm]=useState(false);
-            const[loading,setLoading]=useState(false);
-            const[testing,setTesting]=useState(false);
-            const[loadingSrc,setLoadingSrc]=useState(false);
-            const[result,setResult]=useState(null);
-            const[testResult,setTestResult]=useState(null);
-            async function loadExisting(){
-              if(!prog.trim())return;
-              setLoadingSrc(true);setResult(null);setTestResult(null);
-              try{
-                const d=await api('/sap/smart-source',{name:prog.trim()},token);
-                if(d.error){setResult({ok:false,msg:d.error});setLoadingSrc(false);return;}
-                setSrc(d.source||'');
-                setResult({ok:true,msg:'Loaded '+(d.detected==='function_module'?'FM':'Program')+' '+d.name+' ('+(d.lines||0)+' lines) ready to edit'});
-              }catch(x){setResult({ok:false,msg:x.message});}
-              setLoadingSrc(false);
-            }
-            async function push(){
-              if(!prog.trim()||!src.trim()||!confirm)return;
-              setLoading(true);setResult(null);setTestResult(null);
-              try{
-                const d=await api('/pipeline/deploy',{program:prog.trim().toUpperCase(),source:src,title:title||'Pushed from Claude AI',transport:transport.trim()},token);
-                const ok=d.success!==false&&!d.error&&!d.ERROR;
-                setResult({ok,raw:d,msg:ok?('Deployed '+prog.trim().toUpperCase()+' to SAP DEV'):(d.error||d.message||d.ERROR||'Deploy failed')});
-              }catch(x){setResult({ok:false,msg:x.message});}
-              setLoading(false);
-            }
-            async function runTest(){
-              if(!prog.trim())return;
-              setTesting(true);setTestResult(null);
-              try{
-                const d=await api('/pipeline/test',{program:prog.trim().toUpperCase()},token);
-                const ok=d.success!==false&&!d.error&&!d.syntax_error&&!d.ERROR;
-                setTestResult({ok,raw:d,msg:ok?'Syntax OK':(d.syntax_error||d.error||d.ERROR||'Syntax check failed')});
-              }catch(x){setTestResult({ok:false,msg:x.message});}
-              setTesting(false);
-            }
-            const okBadge={background:'var(--gbg)',color:'var(--green)',border:'1px solid rgba(15,186,129,.3)'};
-            const errBadge={background:'var(--rbg)',color:'var(--red)',border:'1px solid rgba(240,82,82,.3)'};
-            return React.createElement('div',{className:'panel'},
-              React.createElement('div',{className:'ph'},
-                React.createElement('div',{className:'pt'},'\u2B06 Push to SAP'),
-                React.createElement('div',{className:'ps'},'Deploy ABAP code to SAP DEV (192.168.144.174 \u00B7 Client 210). A backup of the existing object is saved automatically before write.')
-              ),
-              React.createElement('div',{className:'toolbar'},
-                React.createElement('input',{value:prog,onChange:e=>setProg(e.target.value),placeholder:'FM or Program name (e.g. ZV2_GR_POST)',style:{flex:1,fontFamily:'var(--mono)',fontWeight:600},onKeyDown:e=>e.key==='Enter'&&loadExisting()}),
-                React.createElement('button',{className:'bs',onClick:loadExisting,disabled:loadingSrc||!prog.trim()},loadingSrc?'Loading...':'Load Existing')
-              ),
-              React.createElement('div',{className:'toolbar'},
-                React.createElement('input',{value:title,onChange:e=>setTitle(e.target.value),placeholder:'Description / Short text',style:{flex:2}}),
-                React.createElement('input',{value:transport,onChange:e=>setTransport(e.target.value),placeholder:'Transport (optional, e.g. S4DK900123)',style:{flex:1,fontFamily:'var(--mono)'}})
-              ),
-              React.createElement('textarea',{value:src,onChange:e=>setSrc(e.target.value),placeholder:'Paste ABAP source here, or click Load Existing to edit current code...',style:{flex:1,minHeight:200,fontFamily:'var(--mono)',fontSize:12,resize:'none',background:'#040810',color:'#9BADC8',border:'1px solid var(--border)',borderRadius:'var(--r)',padding:12,marginBottom:10}}),
-              React.createElement('div',{style:{display:'flex',gap:10,alignItems:'center',marginBottom:10,flexWrap:'wrap',flexShrink:0}},
-                React.createElement('label',{style:{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--fg2)',cursor:'pointer'}},
-                  React.createElement('input',{type:'checkbox',checked:confirm,onChange:e=>setConfirm(e.target.checked),style:{width:14,height:14,padding:0,margin:0}}),
-                  'I confirm this writes to SAP DEV (S4D)'
-                ),
-                React.createElement('button',{className:'bp',onClick:push,disabled:loading||!confirm||!prog.trim()||!src.trim(),style:{background:confirm?'var(--amber)':'var(--bg4)',color:confirm?'#000':'var(--fg4)'}},loading?'Pushing...':'\u2B06 Push to SAP'),
-                result&&result.ok&&React.createElement('button',{className:'bs',onClick:runTest,disabled:testing},testing?'Testing...':'Run Syntax Test'),
-                result&&React.createElement('span',{className:'badge',style:result.ok?okBadge:errBadge},(result.ok?'\u2713 ':'\u2717 ')+result.msg),
-                testResult&&React.createElement('span',{className:'badge',style:testResult.ok?okBadge:errBadge},(testResult.ok?'\u2713 ':'\u2717 ')+testResult.msg)
-              ),
-              result&&result.raw&&React.createElement('div',{style:{maxHeight:140,overflow:'auto',background:'#040810',border:'1px solid var(--border)',borderRadius:'var(--r)',padding:10,fontFamily:'var(--mono)',fontSize:11,color:'var(--fg3)',flexShrink:0}},
-                React.createElement('div',{style:{color:'var(--fg4)',marginBottom:4,fontSize:10,textTransform:'uppercase',letterSpacing:'.06em'}},'Deploy response'),
-                React.createElement('pre',{style:{margin:0,whiteSpace:'pre-wrap'}},JSON.stringify(result.raw,null,2))
-              ),
-              testResult&&testResult.raw&&React.createElement('div',{style:{maxHeight:140,overflow:'auto',background:'#040810',border:'1px solid var(--border)',borderRadius:'var(--r)',padding:10,fontFamily:'var(--mono)',fontSize:11,color:'var(--fg3)',marginTop:8,flexShrink:0}},
-                React.createElement('div',{style:{color:'var(--fg4)',marginBottom:4,fontSize:10,textTransform:'uppercase',letterSpacing:'.06em'}},'Test response'),
-                React.createElement('pre',{style:{margin:0,whiteSpace:'pre-wrap'}},JSON.stringify(testResult.raw,null,2))
-              )
-            );
-          }
-          '''
-
-          # ---- Step 5: Apply three string replacements to the inner HTML ----
-          marker_app = "\nfunction App(){"
-          if html.count(marker_app) != 1:
-              print(f"ERROR: marker_app count = {html.count(marker_app)}"); sys.exit(1)
-          html = html.replace(marker_app, "\n" + PUSH_COMPONENT + marker_app, 1)
-
-          old_tab = "    {id:'source',icon:'\U0001F4DD',label:'Source Viewer',sec:'sap'},"
-          if html.count(old_tab) != 1:
-              print(f"ERROR: source-tab anchor count = {html.count(old_tab)}"); sys.exit(1)
-          new_tab = "    {id:'push',icon:'\u2B06',label:'Push to SAP',sec:'sap'},\n" + old_tab
-          html = html.replace(old_tab, new_tab, 1)
-
-          old_panels = "const panels={chat:React.createElement(Chat,{token}),"
-          if html.count(old_panels) != 1:
-              print(f"ERROR: panels anchor count = {html.count(old_panels)}"); sys.exit(1)
-          new_panels = "const panels={push:React.createElement(PushToSap,{token}),chat:React.createElement(Chat,{token}),"
-          html = html.replace(old_panels, new_panels, 1)
-
-          print(f"Step 5: Patched HTML: {len(html):,} chars")
-
-          # ---- Step 6: Re-encode and splice back into worker ----
-          new_b64 = base64.b64encode(html.encode("utf-8")).decode("ascii")
-          worker_new = worker.replace('const HTML_B64 = "' + old_b64 + '";',
-                                      'const HTML_B64 = "' + new_b64 + '";', 1)
-          if worker_new == worker:
-              print("ERROR: HTML_B64 not replaced in worker source"); sys.exit(1)
-          print(f"Step 6: New worker: {len(worker_new):,} chars (was {len(worker):,})")
-
-          # ---- Step 7: Upload to Cloudflare ----
-          # Try simple PUT with javascript+module first; fall back to multipart
-          print("Step 7: Uploading to Cloudflare...")
-          try:
-              status, body = fetch(f"{API}", method="PUT",
-                                   data=worker_new.encode("utf-8"),
-                                   extra_headers={"Content-Type": "application/javascript+module"})
-              print(f"  Upload OK (HTTP {status})")
-              print("  Response (first 500):", body.decode("utf-8", errors="replace")[:500])
-          except Exception as e:
-              print("FATAL: upload failed:", repr(e))
+              print("UNCAUGHT EXCEPTION:", repr(e))
               traceback.print_exc()
-              sys.exit(1)
-
-          print()
-          print("DONE: abap.v2retail.net updated. Hard-refresh the page to see Push to SAP tab.")
+              sys.exit(99)
           PYEOF
+          echo "---LOG-END---"
+          ls -la /tmp/run.log
+          echo "---LOG-CONTENT---"
+          cat /tmp/run.log
+      - name: Commit log to repo for inspection
+        if: always()
+        run: |
+          mkdir -p .deploy-logs
+          cp /tmp/run.log .deploy-logs/last-run.log || echo "no log file" > .deploy-logs/last-run.log
+          git config user.name "deploy-bot"
+          git config user.email "deploy-bot@v2retail.net"
+          git add .deploy-logs/last-run.log
+          git commit -m "deploy log $(date -u +%Y%m%dT%H%M%SZ)" || echo "nothing to commit"
+          git push origin main || echo "push failed"
