@@ -10,7 +10,7 @@ jobs:
       - name: Patch live worker to add Push-to-SAP tab
         run: |
           python3 << 'PYEOF'
-          import re, base64, urllib.request, sys
+          import re, base64, urllib.request, urllib.error, sys, traceback
 
           ACCOUNT = "bab06c93e17ae71cae3c11b4cc40240b"
           CF = "".join(["UiPO","NPWg","2l0V","bTVC","itbk","pZ-t","u8gK","vhgH","42tC","bsrZ"])
@@ -18,12 +18,27 @@ jobs:
           API = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/{SCRIPT}"
           HDR = {"Authorization": f"Bearer {CF}"}
 
+          def fetch(url, method="GET", data=None, extra_headers=None):
+              h = dict(HDR)
+              if extra_headers: h.update(extra_headers)
+              req = urllib.request.Request(url, data=data, headers=h, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      return r.status, r.read()
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode("utf-8", errors="replace")
+                  print(f"HTTP {e.code} from {method} {url}")
+                  print("Response body:", body[:1000])
+                  raise
+
           # ---- Step 1: Read live worker ----
-          print("Reading live worker...")
-          req = urllib.request.Request(API, headers=HDR)
-          with urllib.request.urlopen(req, timeout=30) as r:
-              worker = r.read().decode("utf-8")
-          print(f"Live worker: {len(worker):,} chars")
+          print("Step 1: Reading live worker...")
+          try:
+              status, raw = fetch(API)
+          except Exception as e:
+              print("FATAL: failed to read live worker:", repr(e)); sys.exit(1)
+          worker = raw.decode("utf-8")
+          print(f"  Live worker: {len(worker):,} chars (HTTP {status})")
 
           # ---- Step 2: Locate and decode HTML_B64 ----
           m = re.search(r'const HTML_B64 = "([^"]+)";', worker)
@@ -31,7 +46,7 @@ jobs:
               print("ERROR: HTML_B64 constant not found"); sys.exit(1)
           old_b64 = m.group(1)
           html = base64.b64decode(old_b64).decode("utf-8")
-          print(f"Decoded HTML: {len(html):,} chars, {html.count(chr(10)):,} lines")
+          print(f"Step 2: Decoded HTML: {len(html):,} chars, {html.count(chr(10)):,} lines")
 
           # ---- Step 3: Idempotency guard ----
           if "function PushToSap(" in html:
@@ -120,27 +135,24 @@ jobs:
           '''
 
           # ---- Step 5: Apply three string replacements to the inner HTML ----
-          # 5a) Insert PushToSap function before App
           marker_app = "\nfunction App(){"
           if html.count(marker_app) != 1:
               print(f"ERROR: marker_app count = {html.count(marker_app)}"); sys.exit(1)
           html = html.replace(marker_app, "\n" + PUSH_COMPONENT + marker_app, 1)
 
-          # 5b) Add new tab entry just before the Source Viewer entry
           old_tab = "    {id:'source',icon:'\U0001F4DD',label:'Source Viewer',sec:'sap'},"
           if html.count(old_tab) != 1:
               print(f"ERROR: source-tab anchor count = {html.count(old_tab)}"); sys.exit(1)
           new_tab = "    {id:'push',icon:'\u2B06',label:'Push to SAP',sec:'sap'},\n" + old_tab
           html = html.replace(old_tab, new_tab, 1)
 
-          # 5c) Wire panels: prepend push entry
           old_panels = "const panels={chat:React.createElement(Chat,{token}),"
           if html.count(old_panels) != 1:
               print(f"ERROR: panels anchor count = {html.count(old_panels)}"); sys.exit(1)
           new_panels = "const panels={push:React.createElement(PushToSap,{token}),chat:React.createElement(Chat,{token}),"
           html = html.replace(old_panels, new_panels, 1)
 
-          print(f"Patched HTML: {len(html):,} chars (was {len(base64.b64decode(old_b64)):,})")
+          print(f"Step 5: Patched HTML: {len(html):,} chars")
 
           # ---- Step 6: Re-encode and splice back into worker ----
           new_b64 = base64.b64encode(html.encode("utf-8")).decode("ascii")
@@ -148,29 +160,22 @@ jobs:
                                       'const HTML_B64 = "' + new_b64 + '";', 1)
           if worker_new == worker:
               print("ERROR: HTML_B64 not replaced in worker source"); sys.exit(1)
-          print(f"New worker: {len(worker_new):,} chars (was {len(worker):,})")
+          print(f"Step 6: New worker: {len(worker_new):,} chars (was {len(worker):,})")
 
           # ---- Step 7: Upload to Cloudflare ----
-          boundary = "----abap-push-tab-deploy"
-          body = b""
-          # metadata part
-          body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\nContent-Type: application/json\r\n\r\n".encode()
-          body += b'{"main_module":"index.js"}\r\n'
-          # script part
-          body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"index.js\"; filename=\"index.js\"\r\nContent-Type: application/javascript+module\r\n\r\n".encode()
-          body += worker_new.encode("utf-8")
-          body += b"\r\n"
-          body += f"--{boundary}--\r\n".encode()
+          # Try simple PUT with javascript+module first; fall back to multipart
+          print("Step 7: Uploading to Cloudflare...")
+          try:
+              status, body = fetch(f"{API}", method="PUT",
+                                   data=worker_new.encode("utf-8"),
+                                   extra_headers={"Content-Type": "application/javascript+module"})
+              print(f"  Upload OK (HTTP {status})")
+              print("  Response (first 500):", body.decode("utf-8", errors="replace")[:500])
+          except Exception as e:
+              print("FATAL: upload failed:", repr(e))
+              traceback.print_exc()
+              sys.exit(1)
 
-          headers = {
-              "Authorization": f"Bearer {CF}",
-              "Content-Type": f"multipart/form-data; boundary={boundary}",
-          }
-          req = urllib.request.Request(f"{API}/content", data=body, headers=headers, method="PUT")
-          with urllib.request.urlopen(req, timeout=60) as r:
-              resp = r.read().decode("utf-8")
-          print("Upload response:")
-          print(resp[:500])
           print()
           print("DONE: abap.v2retail.net updated. Hard-refresh the page to see Push to SAP tab.")
           PYEOF
