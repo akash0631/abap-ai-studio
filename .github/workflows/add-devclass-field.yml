@@ -1,0 +1,25 @@
+name: Add Devclass Field
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run patch script
+        run: python3 .github/scripts/add-devclass-field.py 2>&1 | tee /tmp/run.log
+      - name: Commit log to repo
+        if: always()
+        run: |
+          mkdir -p .deploy-logs
+          cp /tmp/run.log .deploy-logs/add-devclass-field.log || echo "no log file" > .deploy-logs/add-devclass-field.log
+          git config user.name "deploy-bot"
+          git config user.email "deploy-bot@v2retail.net"
+          git add .deploy-logs/add-devclass-field.log
+          git commit -m "deploy log: add-devclass-field" || echo "nothing to commit"
+          git push origin main || echo "push failed"
